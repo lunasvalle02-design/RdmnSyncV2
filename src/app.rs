@@ -1,11 +1,13 @@
 //! Estado global de la aplicación, enrutado de pantallas y procesado de mensajes de fondo.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 
 use egui::{Align, Layout, Margin, RichText, Stroke, Theme, Ui};
 
-use crate::redmine::{Activity, Client, CustomFieldValue, Issue, Priority, Project, TimeEntry, Tracker, User};
+use crate::redmine::{
+    Activity, Client, CustomFieldValue, Issue, IssueStatus, Priority, Project, TimeEntry, Tracker, User, Version,
+};
 use crate::store::Store;
 use crate::sync::{ExecItem, SyncData};
 use crate::theme::{self, icon};
@@ -18,6 +20,8 @@ pub struct Session {
     pub user: User,
     pub projects: Vec<Project>,
     pub activities: Vec<Activity>,
+    pub statuses: Vec<IssueStatus>,
+    pub priorities: Vec<Priority>,
 }
 
 pub enum Loadable<T> {
@@ -45,6 +49,13 @@ pub enum Msg {
     Pushed { item: ExecItem, result: Result<TimeEntry, String> },
     ExecFinished,
     Undone { batch: String, ok: Vec<u32>, errors: Vec<String> },
+    Versions { inst: String, project: u32, result: Result<Vec<Version>, String> },
+    IssueUpdated {
+        src_issue: u32,
+        snapshot: BTreeMap<String, String>,
+        auto_versions: Vec<(u32, String, u32, String)>,
+        result: Result<(Issue, Vec<String>), String>,
+    },
     Weekly { seq: u64, results: Vec<(String, Result<Vec<TimeEntry>, String>)> },
 }
 
@@ -81,6 +92,8 @@ pub struct App {
     pub sync: sync_view::SyncState,
     pub mappings: mappings::MappingsState,
     pub summary: summary::SummaryState,
+    /// Versiones por (instancia, proyecto), cargadas bajo demanda.
+    pub versions: HashMap<(String, u32), Loadable<Vec<Version>>>,
     toasts: Vec<Toast>,
 }
 
@@ -100,6 +113,7 @@ impl App {
             sync: Default::default(),
             mappings: Default::default(),
             summary: Default::default(),
+            versions: HashMap::new(),
             toasts: Vec::new(),
         };
         if let Some(e) = app.store.last_error.take() {
@@ -135,6 +149,29 @@ impl App {
             .collect()
     }
 
+    pub fn request_versions(&mut self, inst: &str, project: u32) {
+        let key = (inst.to_string(), project);
+        if self.versions.contains_key(&key) {
+            return;
+        }
+        let Some(client) = self.sessions.get(inst).map(|s| s.client.clone()) else { return };
+        self.versions.insert(key, Loadable::Loading);
+        let inst = inst.to_string();
+        self.worker.spawn(move || Msg::Versions {
+            inst,
+            project,
+            result: client.versions(project).map_err(|e| e.to_string()),
+        });
+    }
+
+    /// Versiones ya cargadas de un proyecto (vacío si aún no están).
+    pub fn versions_of(&self, inst: &str, project: u32) -> &[Version] {
+        match self.versions.get(&(inst.to_string(), project)) {
+            Some(Loadable::Ready(v)) => v,
+            _ => &[],
+        }
+    }
+
     fn handle(&mut self, msg: Msg) {
         match msg {
             Msg::Connected { inst, key, result } => login::on_connected(self, inst, key, result),
@@ -150,6 +187,12 @@ impl App {
             Msg::Pushed { item, result } => sync_view::on_pushed(self, item, result),
             Msg::ExecFinished => sync_view::on_exec_finished(self),
             Msg::Undone { batch, ok, errors } => mappings::on_undone(self, batch, ok, errors),
+            Msg::Versions { inst, project, result } => {
+                self.versions.insert((inst, project), result.map_or_else(Loadable::Failed, Loadable::Ready));
+            }
+            Msg::IssueUpdated { src_issue, snapshot, auto_versions, result } => {
+                sync_view::on_issue_updated(self, src_issue, snapshot, auto_versions, result)
+            }
             Msg::Weekly { seq, results } => summary::on_weekly(self, seq, results),
         }
     }

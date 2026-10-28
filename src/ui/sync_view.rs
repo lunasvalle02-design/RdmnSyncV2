@@ -1,17 +1,18 @@
 //! Asistente de sincronización: análisis, resolución de dudas, creación de issues y envío.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::{Duration, Local};
 use egui::{Align, Layout, Margin, RichText, TextEdit, Ui, vec2};
 use egui_extras::{Column, TableBuilder};
 
 use crate::app::{App, Loadable, Msg, ToastKind, dates, weak};
+use crate::issue_sync::{self, DiffCtx, Field, IssueDiff, Pending};
 use crate::matching::{self, Confidence};
 use crate::redmine::{
     CustomFieldInput, CustomFieldValue, Issue, NewIssue, Priority, TimeEntry, Tracker,
 };
-use crate::store::{IssueLink, LedgerEntry, LinkOrigin, ProjectLink, pair_key};
+use crate::store::{IssueLink, LedgerEntry, LinkOrigin, ProjectLink, VersionLink, pair_key};
 use crate::sync::{
     self, ExecItem, IssueState, Plan, PlanInput, ProjectSuggestion, Readiness, RowSync, SyncData,
 };
@@ -42,6 +43,10 @@ pub struct SyncState {
     only_pending: bool,
     /// Sugerencias de proyecto descartadas en este análisis.
     dismissed_projects: HashSet<u32>,
+    /// Issues de origen cuyo issue de destino NO se actualizará en este envío.
+    issue_skip: HashSet<u32>,
+    status_choice: BTreeMap<String, Option<String>>,
+    version_choice: BTreeMap<u32, Option<(u32, String)>>,
 }
 
 struct ExecProgress {
@@ -51,6 +56,9 @@ struct ExecProgress {
     ok: usize,
     failed: usize,
     hours: f64,
+    issues_ok: usize,
+    /// Avisos de issues: errores o campos que Redmine no aplicó.
+    issue_warnings: Vec<String>,
     finished: bool,
 }
 
@@ -72,6 +80,9 @@ impl Default for SyncState {
             create: None,
             only_pending: false,
             dismissed_projects: HashSet::new(),
+            issue_skip: HashSet::new(),
+            status_choice: BTreeMap::new(),
+            version_choice: BTreeMap::new(),
         }
     }
 }
@@ -290,6 +301,7 @@ pub fn on_pushed(app: &mut App, item: ExecItem, result: Result<TimeEntry, String
                         dst_subject: subject.clone(),
                         dst_project_id: *project_id,
                         origin: LinkOrigin::Auto,
+                        synced: Default::default(),
                     }))
                 }
                 _ => None,
@@ -324,12 +336,133 @@ pub fn on_exec_finished(app: &mut App) {
     app.save();
     let Some(exec) = app.sync.exec.as_mut() else { return };
     exec.finished = true;
-    let (ok, failed, hours) = (exec.ok, exec.failed, exec.hours);
-    if failed == 0 {
-        app.toast(ToastKind::Success, format!("{ok} imputaciones creadas ({})", theme::hours(hours)));
-    } else {
-        app.toast(ToastKind::Warning, format!("{ok} creadas, {failed} con error. Revisa la tabla."));
+    let (ok, failed, hours, issues_ok) = (exec.ok, exec.failed, exec.hours, exec.issues_ok);
+    let warnings = exec.issue_warnings.clone();
+    let mut parts = Vec::new();
+    if ok + failed > 0 {
+        parts.push(format!("{ok} imputaciones creadas ({})", theme::hours(hours)));
     }
+    if issues_ok > 0 {
+        parts.push(plural(issues_ok, "issue de destino actualizado", "issues de destino actualizados"));
+    }
+    let text = parts.join(" · ");
+    if failed == 0 && warnings.is_empty() {
+        app.toast(ToastKind::Success, text);
+    } else {
+        if failed > 0 {
+            app.toast(ToastKind::Warning, format!("{text}. {failed} imputaciones con error: revisa la tabla."));
+        }
+        for w in warnings {
+            app.toast(ToastKind::Warning, w);
+        }
+    }
+}
+
+pub fn on_issue_updated(
+    app: &mut App,
+    src_issue: u32,
+    mut snapshot: BTreeMap<String, String>,
+    auto_versions: Vec<(u32, String, u32, String)>,
+    result: Result<(Issue, Vec<String>), String>,
+) {
+    let (Some(src), Some(dst)) = (app.sync.src.clone(), app.sync.dst.clone()) else { return };
+    let Some(exec) = app.sync.exec.as_mut() else { return };
+    exec.done += 1;
+    let Some(plan) = app.sync.plan.as_mut() else { return };
+    match result {
+        Ok((issue, ignored)) => {
+            exec.issues_ok += 1;
+            if !ignored.is_empty() {
+                exec.issue_warnings.push(format!(
+                    "Redmine no aplicó en #{}: {} (flujo de trabajo, permisos o ajustes del destino)",
+                    issue.id,
+                    ignored.join(", ")
+                ));
+                // Lo no aplicado no se recuerda como sincronizado, para volver a intentarlo.
+                snapshot.retain(|k, _| !Field::ALL.iter().any(|f| f.key() == k && ignored.iter().any(|l| l == f.label())));
+            }
+            if let Some(slot) = plan.data.dst_pool.iter_mut().find(|i| i.id == issue.id) {
+                *slot = issue.clone();
+            }
+            let src_subject = plan.issues.get(&src_issue).map(|r| r.src.subject.clone()).unwrap_or_default();
+            let origin = match plan.issues.get(&src_issue).map(|r| &r.state) {
+                Some(IssueState::Linked { origin, .. }) => *origin,
+                _ => LinkOrigin::Auto,
+            };
+            let pair = app.store.pair_mut(&src, &dst);
+            let link = pair.issues.entry(src_issue).or_insert_with(|| IssueLink {
+                src_subject,
+                dst_id: issue.id,
+                dst_subject: issue.subject.clone(),
+                dst_project_id: issue.project.id,
+                origin,
+                synced: BTreeMap::new(),
+            });
+            link.synced.extend(snapshot);
+            for (sid, sname, did, dname) in auto_versions {
+                pair.versions.entry(sid).or_insert(VersionLink {
+                    src_name: sname,
+                    src_project: String::new(),
+                    dst_id: did,
+                    dst_name: dname,
+                    dst_project: issue.project.name.clone(),
+                });
+            }
+        }
+        Err(e) => exec.issue_warnings.push(format!("No se pudo actualizar el issue de destino de #{src_issue}: {e}")),
+    }
+}
+
+/// Diferencias entre cada issue de origen enlazado y su issue de destino.
+/// Pide en segundo plano las versiones de destino que falten.
+fn issue_diffs(app: &mut App) -> Vec<IssueDiff> {
+    if !app.store.settings.update_issues {
+        return vec![];
+    }
+    let (Some(src), Some(dst)) = (app.sync.src.clone(), app.sync.dst.clone()) else { return vec![] };
+    let diffs = {
+        let (Some(plan), Some(session)) = (&app.sync.plan, app.sessions.get(&dst)) else { return vec![] };
+        let pair = app.store.pair(&src, &dst);
+        let dst_versions: HashMap<u32, Vec<crate::redmine::Version>> = app
+            .versions
+            .iter()
+            .filter(|((inst, _), _)| *inst == dst)
+            .filter_map(|((_, p), v)| match v {
+                Loadable::Ready(list) => Some((*p, list.clone())),
+                _ => None,
+            })
+            .collect();
+        let ctx = DiffCtx {
+            pair: &pair,
+            fields: &app.store.settings.issue_fields,
+            respect_dst_changes: app.store.settings.respect_dst_changes,
+            dst_statuses: &session.statuses,
+            dst_priorities: &session.priorities,
+            dst_versions: &dst_versions,
+        };
+        plan.issues
+            .iter()
+            .filter_map(|(id, res)| match &res.state {
+                IssueState::Linked { dst_id, .. } => {
+                    let target = plan.data.dst_pool.iter().find(|i| i.id == *dst_id)?;
+                    Some(issue_sync::diff(&res.src, target, pair.issues.get(id).map(|l| &l.synced), &ctx))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    for d in &diffs {
+        for p in &d.pending {
+            if let Pending::VersionsLoading(project) = p {
+                app.request_versions(&dst, *project);
+            }
+        }
+    }
+    diffs
+}
+
+fn plural(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
 }
 
 fn confirm_link(app: &mut App, src_issue: u32, issue: &Issue, origin: LinkOrigin) {
@@ -345,6 +478,7 @@ fn confirm_link(app: &mut App, src_issue: u32, issue: &Issue, origin: LinkOrigin
             dst_subject: issue.subject.clone(),
             dst_project_id: issue.project.id,
             origin,
+            synced: Default::default(),
         },
     );
     app.save();
@@ -378,6 +512,7 @@ fn analyze(app: &mut App) {
     st.plan = None;
     st.exec = None;
     st.dismissed_projects.clear();
+    st.issue_skip.clear();
     let seq = st.seq;
     let req = sync::LoadRequest {
         src: s.client.clone(),
@@ -390,27 +525,245 @@ fn analyze(app: &mut App) {
     app.worker.spawn(move || Msg::PlanLoaded { seq, result: sync::load(req) });
 }
 
-fn execute(app: &mut App) {
+fn execute(app: &mut App, diffs: &[IssueDiff]) {
     let Some(plan) = &app.sync.plan else { return };
     let Some(dst) = app.sync.dst.as_ref().and_then(|d| app.sessions.get(d)) else { return };
     let items = plan.build_items(app.store.settings.add_marker);
-    if items.is_empty() {
+    let updates: Vec<IssueDiff> = diffs
+        .iter()
+        .filter(|d| !d.changes.is_empty() && !app.sync.issue_skip.contains(&d.src_id))
+        .cloned()
+        .collect();
+    if items.is_empty() && updates.is_empty() {
         return;
     }
     app.sync.exec = Some(ExecProgress {
         batch: Local::now().format("%Y%m%d-%H%M%S").to_string(),
-        total: items.len(),
+        total: items.len() + updates.len(),
         done: 0,
         ok: 0,
         failed: 0,
         hours: 0.0,
+        issues_ok: 0,
+        issue_warnings: Vec::new(),
         finished: false,
     });
     let client = dst.client.clone();
     app.worker.run(move |out| {
+        // Primero las imputaciones: si se cerrase antes el issue, Redmine podría rechazarlas.
         sync::execute(&client, items, |item, result| out.send(Msg::Pushed { item: item.clone(), result }));
+        // Después se igualan los issues de DESTINO; el origen solo se ha leído.
+        for d in updates {
+            let result = issue_sync::apply(&client, d.dst_id, &d.changes)
+                .map(|(issue, ignored)| (issue, ignored.into_iter().map(String::from).collect()));
+            out.send(Msg::IssueUpdated {
+                src_issue: d.src_id,
+                snapshot: d.snapshot,
+                auto_versions: d.auto_versions,
+                result,
+            });
+        }
         out.send(Msg::ExecFinished);
     });
+}
+
+fn issue_updates(app: &mut App, ui: &mut Ui, diffs: &[IssueDiff]) {
+    if !app.store.settings.update_issues || diffs.is_empty() {
+        return;
+    }
+    let p = theme::palette(ui);
+    let (Some(src), Some(dst)) = (app.sync.src.clone(), app.sync.dst.clone()) else { return };
+    let Some(plan) = &app.sync.plan else { return };
+    let dst_statuses: Vec<String> =
+        app.sessions.get(&dst).map(|s| s.statuses.iter().map(|x| x.name.clone()).collect()).unwrap_or_default();
+
+    let mut statuses: Vec<String> = Vec::new();
+    let mut versions: Vec<(u32, String, u32)> = Vec::new();
+    let mut notes: Vec<String> = Vec::new();
+    let mut loading = false;
+    for pend in diffs.iter().flat_map(|d| &d.pending) {
+        match pend {
+            Pending::Status(s) if !statuses.contains(s) => statuses.push(s.clone()),
+            Pending::Version { src_id, src_name, dst_project } if !versions.iter().any(|v| v.0 == *src_id) => {
+                versions.push((*src_id, src_name.clone(), *dst_project))
+            }
+            Pending::VersionsLoading(_) => loading = true,
+            Pending::Note(n) if !notes.contains(n) => notes.push(n.clone()),
+            _ => {}
+        }
+    }
+    let version_options: HashMap<u32, Vec<crate::redmine::Version>> =
+        versions.iter().map(|v| (v.2, app.versions_of(&dst, v.2).to_vec())).collect();
+    let changed: Vec<&IssueDiff> = diffs.iter().filter(|d| !d.changes.is_empty()).collect();
+    let up_to_date = diffs.len() - changed.len();
+    let busy = app.sync.exec.as_ref().is_some_and(|e| !e.finished);
+
+    let mut status_ok: Vec<(String, String)> = Vec::new();
+    let mut version_ok: Vec<(u32, String, u32, String, u32)> = Vec::new();
+    let mut toggles: Vec<(u32, bool)> = Vec::new();
+    ui.horizontal(|ui| {
+        theme::section_title(ui, icon::NOTE_PENCIL, "Actualizar issues de destino");
+        if !changed.is_empty() {
+            theme::badge(ui, format!("{} con cambios", changed.len()), p.accent);
+        }
+        if !statuses.is_empty() || !versions.is_empty() {
+            theme::badge(ui, "Requiere tu atención", p.warning);
+        }
+    });
+    theme::card(ui, |ui| {
+        ui.label(weak(
+            ui,
+            format!(
+                "Los issues de {} se igualarán con los datos de sus issues de {}. El origen solo se lee; nunca se modifica. Los campos se eligen en Ajustes.",
+                app.store.instance_name(&dst),
+                app.store.instance_name(&src)
+            ),
+        ));
+        if !statuses.is_empty() {
+            ui.add_space(6.0);
+            ui.label(RichText::new("Estados sin equivalente en el destino").family(theme::semibold()));
+            egui::Grid::new("status_map").num_columns(4).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
+                for name in &statuses {
+                    let choice = app.sync.status_choice.entry(name.clone()).or_insert_with(|| {
+                        matching::suggest_name(name, &dst_statuses).filter(|(_, s)| *s >= 0.5).map(|(i, _)| dst_statuses[i].clone())
+                    });
+                    ui.label(RichText::new(name).family(theme::semibold()));
+                    ui.label(RichText::new(icon::ARROW_RIGHT).color(p.text_weak));
+                    egui::ComboBox::from_id_salt(("status_map", name.as_str()))
+                        .selected_text(choice.clone().unwrap_or_else(|| "Elegir…".into()))
+                        .width(220.0)
+                        .show_ui(ui, |ui| {
+                            for d in &dst_statuses {
+                                ui.selectable_value(choice, Some(d.clone()), d);
+                            }
+                        });
+                    ui.add_enabled_ui(choice.is_some(), |ui| {
+                        if ui.button(format!("{}  Confirmar", icon::CHECK)).clicked()
+                            && let Some(d) = choice.clone()
+                        {
+                            status_ok.push((name.clone(), d));
+                        }
+                    });
+                    ui.end_row();
+                }
+            });
+        }
+        if !versions.is_empty() {
+            ui.add_space(6.0);
+            ui.label(RichText::new("Versiones sin equivalente en el destino").family(theme::semibold()));
+            egui::Grid::new("version_map").num_columns(4).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
+                for (src_id, src_name, project) in &versions {
+                    let options = version_options.get(project).cloned().unwrap_or_default();
+                    let choice = app.sync.version_choice.entry(*src_id).or_default();
+                    ui.label(RichText::new(src_name).family(theme::semibold()));
+                    ui.label(RichText::new(icon::ARROW_RIGHT).color(p.text_weak));
+                    egui::ComboBox::from_id_salt(("version_map", *src_id))
+                        .selected_text(choice.as_ref().map(|c| c.1.clone()).unwrap_or_else(|| "Elegir…".into()))
+                        .width(220.0)
+                        .show_ui(ui, |ui| {
+                            for v in &options {
+                                ui.selectable_value(choice, Some((v.id, v.name.clone())), &v.name);
+                            }
+                        });
+                    ui.add_enabled_ui(choice.is_some(), |ui| {
+                        if ui.button(format!("{}  Confirmar", icon::CHECK)).clicked()
+                            && let Some((did, dname)) = choice.clone()
+                        {
+                            version_ok.push((*src_id, src_name.clone(), did, dname, *project));
+                        }
+                    });
+                    ui.end_row();
+                }
+            });
+            ui.label(weak(ui, "Si la versión no existe todavía, créala en el destino y pulsa «Analizar» de nuevo."));
+        }
+        if loading {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(weak(ui, "Cargando versiones del destino…"));
+            });
+        }
+        for n in &notes {
+            ui.label(RichText::new(format!("{}  {n}", icon::INFO)).color(p.text_weak));
+        }
+        if !changed.is_empty() {
+            ui.add_space(6.0);
+            ui.separator();
+        }
+        for d in &changed {
+            let res = plan.issues.get(&d.src_id);
+            let dst_subject = match res.map(|r| &r.state) {
+                Some(IssueState::Linked { subject, .. }) => subject.clone(),
+                _ => String::new(),
+            };
+            ui.horizontal(|ui| {
+                let mut include = !app.sync.issue_skip.contains(&d.src_id);
+                if ui.add_enabled(!busy, egui::Checkbox::without_text(&mut include)).changed() {
+                    toggles.push((d.src_id, include));
+                }
+                ui.label(weak(ui, format!("#{}", d.src_id)));
+                ui.label(RichText::new(icon::ARROW_RIGHT).color(p.text_weak));
+                ui.hyperlink_to(format!("#{}", d.dst_id), format!("{}/issues/{}", plan.dst_base, d.dst_id));
+                ui.add(egui::Label::new(RichText::new(dst_subject).family(theme::semibold())).truncate());
+            });
+            ui.horizontal_wrapped(|ui| {
+                ui.add_space(30.0);
+                for c in &d.changes {
+                    egui::Frame::new()
+                        .fill(p.control)
+                        .corner_radius(8)
+                        .inner_margin(egui::Margin::symmetric(8, 3))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(weak(ui, format!("{}:", c.field.label())).size(12.5));
+                                ui.label(RichText::new(&c.from).size(12.5).strikethrough().color(p.text_weak));
+                                ui.label(RichText::new(icon::ARROW_RIGHT).size(12.0).color(p.text_weak));
+                                ui.label(RichText::new(&c.to).size(12.5).color(p.accent));
+                            });
+                        });
+                }
+            });
+            ui.add_space(4.0);
+        }
+        if up_to_date > 0 {
+            ui.label(weak(
+                ui,
+                format!("{}  {}", icon::CHECK, plural(up_to_date, "issue de destino ya está al día.", "issues de destino ya están al día.")),
+            ));
+        }
+    });
+    for (id, include) in toggles {
+        if include {
+            app.sync.issue_skip.remove(&id);
+        } else {
+            app.sync.issue_skip.insert(id);
+        }
+    }
+    if !status_ok.is_empty() || !version_ok.is_empty() {
+        let dst_names: HashMap<u32, String> = app
+            .sessions
+            .get(&dst)
+            .map(|s| s.projects.iter().map(|p| (p.id, p.name.clone())).collect())
+            .unwrap_or_default();
+        let pair = app.store.pair_mut(&src, &dst);
+        for (s, d) in status_ok {
+            pair.set_status(&s, &d);
+        }
+        for (sid, sname, did, dname, project) in version_ok {
+            pair.versions.insert(
+                sid,
+                VersionLink {
+                    src_name: sname,
+                    src_project: String::new(),
+                    dst_id: did,
+                    dst_name: dname,
+                    dst_project: dst_names.get(&project).cloned().unwrap_or_default(),
+                },
+            );
+        }
+        app.save();
+    }
+    ui.add_space(8.0);
 }
 
 // ---- Vista ------------------------------------------------------------------
@@ -424,6 +777,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         app.sync.dst = connected.iter().find(|c| Some(*c) != app.sync.src.as_ref()).cloned();
     }
 
+    let diffs = issue_diffs(app);
     crate::app::page(ui, "sync_page", |ui| {
         theme::page_header(
             ui,
@@ -464,9 +818,10 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         pending_activities(app, ui);
         pending_projects(app, ui);
         pending_issues(app, ui);
+        issue_updates(app, ui, &diffs);
         rows_table(app, ui);
         ui.add_space(12.0);
-        footer(app, ui);
+        footer(app, ui, &diffs);
     });
 
     create_dialog(app, ui);
@@ -1051,36 +1406,64 @@ fn row_status(ui: &mut Ui, p: &theme::Palette, include: bool, sync: &RowSync, re
     }
 }
 
-fn footer(app: &mut App, ui: &mut Ui) {
+fn footer(app: &mut App, ui: &mut Ui, diffs: &[IssueDiff]) {
     let p = theme::palette(ui);
     let Some(plan) = &app.sync.plan else { return };
     let items = plan.build_items(app.store.settings.add_marker);
     let hours: f64 = items.iter().map(|i| i.new.hours).sum();
+    let updates = diffs
+        .iter()
+        .filter(|d| !d.changes.is_empty() && !app.sync.issue_skip.contains(&d.src_id))
+        .count();
     let mut go = false;
+    let mut settings_changed = false;
     theme::card(ui, |ui| {
         if let Some(exec) = &app.sync.exec {
             let frac = exec.done as f32 / exec.total.max(1) as f32;
             ui.add(
                 egui::ProgressBar::new(frac)
-                    .text(format!("{}/{} · {} correctas · {} con error", exec.done, exec.total, exec.ok, exec.failed))
-                    .fill(if exec.failed > 0 { p.warning } else { p.success }),
+                    .text(format!(
+                        "{}/{} · {} imputaciones · {} issues actualizados · {} con error",
+                        exec.done, exec.total, exec.ok, exec.issues_ok, exec.failed
+                    ))
+                    .fill(if exec.failed > 0 || !exec.issue_warnings.is_empty() { p.warning } else { p.success }),
             );
             ui.add_space(6.0);
         }
         ui.horizontal(|ui| {
-            let marker = if app.store.settings.add_marker {
-                format!("Se añadirá la marca [sync:{}#…] al comentario en el destino.", app.sync.src.as_deref().unwrap_or(""))
-            } else {
-                "Sin marca de sincronización en los comentarios (desactivada en Ajustes).".into()
-            };
-            ui.label(weak(ui, marker));
+            ui.vertical(|ui| {
+                settings_changed |= ui
+                    .checkbox(
+                        &mut app.store.settings.update_issues,
+                        "Igualar también los issues de destino con los de origen",
+                    )
+                    .on_hover_text("Estado, % realizado, fechas, estimación y versión (configurable en Ajustes). El issue de origen nunca se modifica.")
+                    .changed();
+                let marker = if app.store.settings.add_marker {
+                    format!("Se añadirá la marca [sync:{}#…] al comentario en el destino.", app.sync.src.as_deref().unwrap_or(""))
+                } else {
+                    "Sin marca de sincronización en los comentarios (desactivada en Ajustes).".into()
+                };
+                ui.label(weak(ui, marker));
+            });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let busy = app.sync.exec.as_ref().is_some_and(|e| !e.finished);
-                ui.add_enabled_ui(!items.is_empty() && !busy, |ui| {
-                    let text = if items.is_empty() {
+                let nothing = items.is_empty() && updates == 0;
+                ui.add_enabled_ui(!nothing && !busy, |ui| {
+                    let mut parts = Vec::new();
+                    if !items.is_empty() {
+                        parts.push(format!("crear {} ({})", plural(items.len(), "imputación", "imputaciones"), theme::hours(hours)));
+                    }
+                    if updates > 0 {
+                        parts.push(format!("actualizar {}", plural(updates, "issue", "issues")));
+                    }
+                    let text = if nothing {
                         "Nada que sincronizar".to_string()
                     } else {
-                        format!("{}  Crear {} imputaciones ({})", icon::ROCKET_LAUNCH, items.len(), theme::hours(hours))
+                        let joined = parts.join(" y ");
+                        let mut chars = joined.chars();
+                        let first = chars.next().map(|c| c.to_uppercase().collect::<String>()).unwrap_or_default();
+                        format!("{}  {first}{}", icon::ROCKET_LAUNCH, chars.as_str())
                     };
                     if theme::primary_button(ui, text).clicked() {
                         go = true;
@@ -1089,8 +1472,11 @@ fn footer(app: &mut App, ui: &mut Ui) {
             });
         });
     });
+    if settings_changed {
+        app.save();
+    }
     if go {
-        execute(app);
+        execute(app, diffs);
     }
 }
 

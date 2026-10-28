@@ -63,7 +63,9 @@ pub fn connect(app: &mut App, inst_id: &str) {
             let user = client.current_user().map_err(|e| e.to_string())?;
             let projects = client.my_projects(&user).map_err(|e| e.to_string())?;
             let activities = client.activities().unwrap_or_default();
-            Ok(Box::new(Session { client, user, projects, activities }))
+            let statuses = client.statuses().unwrap_or_default();
+            let priorities = client.priorities().unwrap_or_default();
+            Ok(Box::new(Session { client, user, projects, activities, statuses, priorities }))
         })();
         Msg::Connected { inst: inst.id, key, result }
     });

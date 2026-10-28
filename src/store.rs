@@ -21,8 +21,9 @@ pub struct Instance {
     pub remember_key: bool,
 }
 
+/// Correspondencia por nombre (actividades, estados).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ActivityLink {
+pub struct NameLink {
     pub src_name: String,
     pub dst_name: String,
 }
@@ -61,6 +62,21 @@ pub struct IssueLink {
     pub dst_subject: String,
     pub dst_project_id: u32,
     pub origin: LinkOrigin,
+    /// Valores del origen la última vez que se igualó el issue (clave: campo).
+    /// Sirve para no deshacer cambios hechos después directamente en el destino.
+    #[serde(default)]
+    pub synced: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionLink {
+    pub src_name: String,
+    #[serde(default)]
+    pub src_project: String,
+    pub dst_id: u32,
+    pub dst_name: String,
+    #[serde(default)]
+    pub dst_project: String,
 }
 
 /// Regla: si el comentario de la imputación contiene `contains`, usar la actividad `dst_activity`.
@@ -75,7 +91,7 @@ pub struct CommentRule {
 pub struct PairMappings {
     /// Clave: nombre normalizado de la actividad de origen.
     #[serde(default)]
-    pub activities: BTreeMap<String, ActivityLink>,
+    pub activities: BTreeMap<String, NameLink>,
     /// Clave: id del proyecto de origen.
     #[serde(default)]
     pub projects: BTreeMap<u32, ProjectLink>,
@@ -89,6 +105,12 @@ pub struct PairMappings {
     pub priorities: BTreeMap<String, String>,
     #[serde(default)]
     pub rules: Vec<CommentRule>,
+    /// Clave: nombre normalizado del estado de origen.
+    #[serde(default)]
+    pub statuses: BTreeMap<String, NameLink>,
+    /// Clave: id de la versión de origen.
+    #[serde(default)]
+    pub versions: BTreeMap<u32, VersionLink>,
 }
 
 impl PairMappings {
@@ -99,7 +121,18 @@ impl PairMappings {
     pub fn set_activity(&mut self, src_name: &str, dst_name: &str) {
         self.activities.insert(
             normalize(src_name),
-            ActivityLink { src_name: src_name.to_string(), dst_name: dst_name.to_string() },
+            NameLink { src_name: src_name.to_string(), dst_name: dst_name.to_string() },
+        );
+    }
+
+    pub fn status_for(&self, src_name: &str) -> Option<&str> {
+        self.statuses.get(&normalize(src_name)).map(|l| l.dst_name.as_str())
+    }
+
+    pub fn set_status(&mut self, src_name: &str, dst_name: &str) {
+        self.statuses.insert(
+            normalize(src_name),
+            NameLink { src_name: src_name.to_string(), dst_name: dst_name.to_string() },
         );
     }
 
@@ -131,7 +164,37 @@ pub struct LedgerEntry {
     pub undone: bool,
 }
 
+/// Campos que se igualan al actualizar los issues de destino.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct IssueFields {
+    pub status: bool,
+    pub done_ratio: bool,
+    pub dates: bool,
+    pub estimated: bool,
+    pub version: bool,
+    pub priority: bool,
+    pub subject: bool,
+    pub description: bool,
+}
+
+impl Default for IssueFields {
+    fn default() -> Self {
+        Self {
+            status: true,
+            done_ratio: true,
+            dates: true,
+            estimated: true,
+            version: true,
+            priority: false,
+            subject: false,
+            description: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     pub dark_mode: bool,
     /// Añadir `[sync:origen#id]` al comentario en el destino.
@@ -140,11 +203,24 @@ pub struct Settings {
     pub auto_threshold: f32,
     /// Umbral a partir del cual se propone un candidato (por debajo se sugiere crear).
     pub ask_threshold: f32,
+    /// Igualar los issues de destino con los de origen al sincronizar.
+    pub update_issues: bool,
+    pub issue_fields: IssueFields,
+    /// No sobrescribir campos cambiados en el destino si el origen no ha cambiado desde la última vez.
+    pub respect_dst_changes: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { dark_mode: true, add_marker: true, auto_threshold: 0.92, ask_threshold: 0.55 }
+        Self {
+            dark_mode: true,
+            add_marker: true,
+            auto_threshold: 0.92,
+            ask_threshold: 0.55,
+            update_issues: true,
+            issue_fields: IssueFields::default(),
+            respect_dst_changes: true,
+        }
     }
 }
 

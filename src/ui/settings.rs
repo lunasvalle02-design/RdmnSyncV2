@@ -64,6 +64,37 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         });
         ui.add_space(12.0);
 
+        theme::section_title(ui, icon::NOTE_PENCIL, "Actualización de issues de destino");
+        theme::card(ui, |ui| {
+            changed |= ui
+                .checkbox(&mut s.update_issues, "Igualar los issues de destino con los de origen al sincronizar")
+                .changed();
+            ui.label(weak(ui, "Solo se modifica el issue de destino; el de origen se usa únicamente como fuente de datos."));
+            ui.add_space(6.0);
+            ui.add_enabled_ui(s.update_issues, |ui| {
+                let f = &mut s.issue_fields;
+                ui.horizontal_wrapped(|ui| {
+                    changed |= ui.checkbox(&mut f.status, "Estado").changed();
+                    changed |= ui.checkbox(&mut f.done_ratio, "% realizado").changed();
+                    changed |= ui.checkbox(&mut f.dates, "Fechas de inicio y fin").changed();
+                    changed |= ui.checkbox(&mut f.estimated, "Estimación").changed();
+                    changed |= ui.checkbox(&mut f.version, "Versión prevista").changed();
+                    changed |= ui.checkbox(&mut f.priority, "Prioridad").changed();
+                    changed |= ui.checkbox(&mut f.subject, "Asunto").changed();
+                    changed |= ui.checkbox(&mut f.description, "Descripción").changed();
+                });
+                ui.add_space(6.0);
+                changed |= ui
+                    .checkbox(&mut s.respect_dst_changes, "Respetar los cambios hechos directamente en el destino")
+                    .changed();
+                ui.label(weak(
+                    ui,
+                    "Si un campo no ha cambiado en el origen desde la última sincronización, no se                      sobrescribe aunque alguien lo haya modificado en el destino.",
+                ));
+            });
+        });
+        ui.add_space(12.0);
+
         theme::section_title(ui, icon::DATABASE, "Datos");
         theme::card(ui, |ui| {
             ui.horizontal_wrapped(|ui| {

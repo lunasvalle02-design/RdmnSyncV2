@@ -19,6 +19,15 @@ con emparejamiento automático de issues y mapeo aprendido de actividades.
     sugiere y **siempre pide confirmación**. Se recuerda por pareja de Redmines.
   - Evita duplicados con tres mecanismos: marca `[sync:<origen>#<id>]` en el comentario (solo en el
     destino), historial local, y detección de imputaciones iguales (día + horas + issue).
+- **Igualar issues de destino** (activado por defecto): al sincronizar, el issue de **destino** recibe
+  estado, % realizado, fechas, estimación y versión del de **origen**, que solo se lee. Prioridad,
+  asunto y descripción son opcionales (Ajustes). Muestra los cambios campo a campo antes de enviar,
+  aplica después de crear las imputaciones, vuelve a leer el issue para avisar de lo que Redmine no
+  aplicó (flujo de trabajo, permisos) y, por defecto, no sobrescribe campos modificados en el destino
+  si el origen no ha cambiado desde la última sincronización.
+- **Estados y versiones**: los nombres idénticos se emparejan solos; los distintos se preguntan y se
+  recuerdan. También se pueden mapear a mano en «Mapeos» (versiones por pareja de proyectos, con
+  emparejado automático por nombre).
 - **Proyectos**: se mapean al confirmar imputaciones sin issue, al crear un issue, a mano en «Mapeos»
   o confirmando la sugerencia que hace la app cuando la mayoría de issues enlazados de un proyecto de
   origen están en el mismo proyecto de destino.

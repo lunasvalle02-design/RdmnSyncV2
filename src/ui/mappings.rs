@@ -7,8 +7,9 @@ use egui_extras::{Column, TableBuilder};
 
 use crate::app::{App, Msg, ToastKind, dates, weak};
 use crate::matching::normalize;
-use crate::redmine::Project;
-use crate::store::{CommentRule, ProjectLink, pair_key};
+use crate::redmine::{Project, Version};
+use crate::matching::same_name;
+use crate::store::{CommentRule, ProjectLink, VersionLink, pair_key};
 use crate::theme::{self, icon};
 
 #[derive(Default)]
@@ -22,6 +23,12 @@ pub struct MappingsState {
     new_rule_act: Option<String>,
     new_proj_src: Option<(u32, String)>,
     new_proj_dst: Option<(u32, String)>,
+    new_status_src: Option<String>,
+    new_status_dst: Option<String>,
+    ver_src_project: Option<(u32, String)>,
+    ver_dst_project: Option<(u32, String)>,
+    new_ver_src: Option<(u32, String)>,
+    new_ver_dst: Option<(u32, String)>,
     undoing: Option<String>,
 }
 
@@ -77,6 +84,10 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         ui.add_space(12.0);
         projects(app, ui, &src, &dst);
         ui.add_space(12.0);
+        statuses(app, ui, &src, &dst);
+        ui.add_space(12.0);
+        versions(app, ui, &src, &dst);
+        ui.add_space(12.0);
         issues(app, ui, &src, &dst);
         ui.add_space(12.0);
         history(app, ui, &src, &dst);
@@ -84,6 +95,10 @@ pub fn show(app: &mut App, ui: &mut Ui) {
 }
 
 impl App {
+    fn status_names(&self, inst: &str) -> Vec<String> {
+        self.sessions.get(inst).map(|s| s.statuses.iter().map(|a| a.name.clone()).collect()).unwrap_or_default()
+    }
+
     fn activity_names(&self, inst: &str) -> Vec<String> {
         self.sessions.get(inst).map(|s| s.activities.iter().map(|a| a.name.clone()).collect()).unwrap_or_default()
     }
@@ -308,6 +323,227 @@ fn projects(app: &mut App, ui: &mut Ui, src: &str, dst: &str) {
                 && let (Some((sid, sname)), Some((did, dname))) = (st.new_proj_src.take(), st.new_proj_dst.take())
             {
                 pair.projects.insert(sid, ProjectLink { src_name: sname, dst_id: did, dst_name: dname });
+                changed = true;
+            }
+        });
+    });
+    if changed {
+        *app.store.pair_mut(src, dst) = pair;
+        app.save();
+    }
+}
+
+fn statuses(app: &mut App, ui: &mut Ui, src: &str, dst: &str) {
+    let p = theme::palette(ui);
+    let src_names = app.status_names(src);
+    let dst_names = app.status_names(dst);
+    let mut pair = app.store.pair(src, dst);
+    let mut changed = false;
+    theme::section_title(ui, icon::FLAG, "Estados");
+    theme::card(ui, |ui| {
+        ui.label(weak(
+            ui,
+            "Se usan al igualar el estado de los issues de destino. Los estados con el mismo nombre se \
+             emparejan solos; aquí solo hace falta indicar los que se llaman distinto.",
+        ));
+        ui.add_space(4.0);
+        let mut remove = None;
+        egui::Grid::new("map_statuses").num_columns(4).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
+            for (key, link) in pair.statuses.iter_mut() {
+                ui.label(RichText::new(&link.src_name).family(theme::semibold()));
+                ui.label(RichText::new(icon::ARROW_RIGHT).color(p.text_weak));
+                if dst_names.is_empty() {
+                    ui.label(&link.dst_name);
+                } else {
+                    let mut v = Some(link.dst_name.clone());
+                    if name_combo(ui, ("map_status", key.as_str()), &mut v, &dst_names, 220.0) {
+                        link.dst_name = v.unwrap_or_default();
+                        changed = true;
+                    }
+                }
+                if theme::icon_button(ui, icon::TRASH, "Olvidar este mapeo").clicked() {
+                    remove = Some(key.clone());
+                }
+                ui.end_row();
+            }
+        });
+        if let Some(k) = remove {
+            pair.statuses.remove(&k);
+            changed = true;
+        }
+        if src_names.is_empty() || dst_names.is_empty() {
+            ui.label(weak(ui, "Conecta ambos Redmines para añadir o editar estados."));
+            return;
+        }
+        let unmatched: Vec<&String> = src_names
+            .iter()
+            .filter(|s| pair.status_for(s).is_none() && !dst_names.iter().any(|d| same_name(d, s)))
+            .collect();
+        if !unmatched.is_empty() {
+            ui.label(RichText::new(format!(
+                "{}  Sin equivalente: {}",
+                icon::WARNING,
+                unmatched.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+            ))
+            .color(p.warning));
+        }
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label(weak(ui, "Añadir"));
+            let st = &mut app.mappings;
+            name_combo(ui, "new_status_src", &mut st.new_status_src, &src_names, 200.0);
+            ui.label(RichText::new(icon::ARROW_RIGHT).color(p.text_weak));
+            name_combo(ui, "new_status_dst", &mut st.new_status_dst, &dst_names, 200.0);
+            let ok = st.new_status_src.is_some() && st.new_status_dst.is_some();
+            if ui.add_enabled(ok, egui::Button::new(format!("{}  Guardar", icon::PLUS))).clicked()
+                && let (Some(s), Some(d)) = (st.new_status_src.take(), st.new_status_dst.take())
+            {
+                pair.set_status(&s, &d);
+                changed = true;
+            }
+        });
+    });
+    if changed {
+        *app.store.pair_mut(src, dst) = pair;
+        app.save();
+    }
+}
+
+fn version_combo(
+    ui: &mut Ui,
+    id: impl egui::AsIdSalt,
+    value: &mut Option<(u32, String)>,
+    options: &[Version],
+    width: f32,
+) {
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(value.as_ref().map(|v| v.1.clone()).unwrap_or_else(|| "Elegir…".into()))
+        .width(width)
+        .show_ui(ui, |ui| {
+            for v in options {
+                let label = if v.status == "open" || v.status.is_empty() {
+                    v.name.clone()
+                } else {
+                    format!("{} ({})", v.name, if v.status == "locked" { "bloqueada" } else { "cerrada" })
+                };
+                ui.selectable_value(value, Some((v.id, v.name.clone())), label);
+            }
+        });
+}
+
+fn versions(app: &mut App, ui: &mut Ui, src: &str, dst: &str) {
+    let p = theme::palette(ui);
+    let src_projects = app.sessions.get(src).map(|s| s.projects.clone()).unwrap_or_default();
+    let dst_projects = app.sessions.get(dst).map(|s| s.projects.clone()).unwrap_or_default();
+    // Cargar bajo demanda las versiones de los proyectos elegidos.
+    if let Some((id, _)) = app.mappings.ver_src_project {
+        app.request_versions(src, id);
+    }
+    if let Some((id, _)) = app.mappings.ver_dst_project {
+        app.request_versions(dst, id);
+    }
+    let src_versions = app.mappings.ver_src_project.as_ref().map(|(id, _)| app.versions_of(src, *id).to_vec()).unwrap_or_default();
+    let dst_versions = app.mappings.ver_dst_project.as_ref().map(|(id, _)| app.versions_of(dst, *id).to_vec()).unwrap_or_default();
+    let mut pair = app.store.pair(src, dst);
+    let mut changed = false;
+    theme::section_title(ui, icon::GIT_BRANCH, "Versiones");
+    theme::card(ui, |ui| {
+        ui.label(weak(
+            ui,
+            "Se usan al igualar la versión prevista de los issues de destino. Al sincronizar, las \
+             versiones con el mismo nombre en el proyecto de destino se emparejan solas.",
+        ));
+        ui.add_space(4.0);
+        if pair.versions.is_empty() {
+            ui.label(weak(ui, "Sin versiones mapeadas."));
+        }
+        let mut remove = None;
+        egui::Grid::new("map_versions").num_columns(4).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
+            for (id, link) in &pair.versions {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(&link.src_name).family(theme::semibold()));
+                    if !link.src_project.is_empty() {
+                        ui.label(weak(ui, format!("· {}", link.src_project)));
+                    }
+                });
+                ui.label(RichText::new(icon::ARROW_RIGHT).color(p.text_weak));
+                ui.horizontal(|ui| {
+                    ui.label(&link.dst_name);
+                    if !link.dst_project.is_empty() {
+                        ui.label(weak(ui, format!("· {}", link.dst_project)));
+                    }
+                });
+                if theme::icon_button(ui, icon::TRASH, "Olvidar este mapeo").clicked() {
+                    remove = Some(*id);
+                }
+                ui.end_row();
+            }
+        });
+        if let Some(id) = remove {
+            pair.versions.remove(&id);
+            changed = true;
+        }
+        if src_projects.is_empty() || dst_projects.is_empty() {
+            ui.label(weak(ui, "Conecta ambos Redmines para añadir versiones."));
+            return;
+        }
+        ui.separator();
+        let st = &mut app.mappings;
+        egui::Grid::new("add_version").num_columns(4).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
+            ui.label(weak(ui, "Proyectos"));
+            if project_combo(ui, "ver_src_project", &mut st.ver_src_project, &src_projects, 240.0) {
+                st.new_ver_src = None;
+            }
+            ui.label(RichText::new(icon::ARROW_RIGHT).color(p.text_weak));
+            if project_combo(ui, "ver_dst_project", &mut st.ver_dst_project, &dst_projects, 240.0) {
+                st.new_ver_dst = None;
+            }
+            ui.end_row();
+            if st.ver_src_project.is_some() && st.ver_dst_project.is_some() {
+                ui.label(weak(ui, "Versión"));
+                version_combo(ui, "new_ver_src", &mut st.new_ver_src, &src_versions, 240.0);
+                ui.label(RichText::new(icon::ARROW_RIGHT).color(p.text_weak));
+                version_combo(ui, "new_ver_dst", &mut st.new_ver_dst, &dst_versions, 240.0);
+                ui.end_row();
+            }
+        });
+        let (Some((_, sp_name)), Some((_, dp_name))) = (st.ver_src_project.clone(), st.ver_dst_project.clone()) else {
+            ui.label(weak(ui, "Elige un proyecto de cada Redmine para ver sus versiones."));
+            return;
+        };
+        ui.horizontal(|ui| {
+            let ok = st.new_ver_src.is_some() && st.new_ver_dst.is_some();
+            if ui.add_enabled(ok, egui::Button::new(format!("{}  Guardar", icon::PLUS))).clicked()
+                && let (Some((sid, sname)), Some((did, dname))) = (st.new_ver_src.take(), st.new_ver_dst.take())
+            {
+                pair.versions.insert(sid, VersionLink {
+                    src_name: sname,
+                    src_project: sp_name.clone(),
+                    dst_id: did,
+                    dst_name: dname,
+                    dst_project: dp_name.clone(),
+                });
+                changed = true;
+            }
+            let same: Vec<(&Version, &Version)> = src_versions
+                .iter()
+                .filter(|s| !pair.versions.contains_key(&s.id))
+                .filter_map(|s| dst_versions.iter().find(|d| same_name(&d.name, &s.name)).map(|d| (s, d)))
+                .collect();
+            if ui
+                .add_enabled(!same.is_empty(), egui::Button::new(format!("{}  Emparejar {} por nombre", icon::MAGIC_WAND, same.len())))
+                .on_hover_text("Mapea todas las versiones que se llaman igual en ambos proyectos")
+                .clicked()
+            {
+                for (s, d) in same {
+                    pair.versions.insert(s.id, VersionLink {
+                        src_name: s.name.clone(),
+                        src_project: sp_name.clone(),
+                        dst_id: d.id,
+                        dst_name: d.name.clone(),
+                        dst_project: dp_name.clone(),
+                    });
+                }
                 changed = true;
             }
         });

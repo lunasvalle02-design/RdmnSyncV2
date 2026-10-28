@@ -143,6 +143,18 @@ impl Client {
         Self::read(resp)
     }
 
+    fn put(&self, path: &str, body: &Value) -> ApiResult<()> {
+        let resp = self
+            .agent
+            .put(self.url(path))
+            .header("X-Redmine-API-Key", &self.key)
+            .header("Accept", "application/json")
+            .send_json(body)
+            .map_err(network)?;
+        let _: Value = Self::read(resp)?;
+        Ok(())
+    }
+
     fn delete(&self, path: &str) -> ApiResult<()> {
         let resp = self
             .agent
@@ -285,6 +297,23 @@ impl Client {
         Ok(self.get::<W>("/trackers.json", &[])?.trackers)
     }
 
+    pub fn statuses(&self) -> ApiResult<Vec<IssueStatus>> {
+        #[derive(serde::Deserialize)]
+        struct W {
+            issue_statuses: Vec<IssueStatus>,
+        }
+        Ok(self.get::<W>("/issue_statuses.json", &[])?.issue_statuses)
+    }
+
+    /// Versiones utilizables en un proyecto (incluye las compartidas desde otros).
+    pub fn versions(&self, project_id: u32) -> ApiResult<Vec<Version>> {
+        #[derive(serde::Deserialize)]
+        struct W {
+            versions: Vec<Version>,
+        }
+        Ok(self.get::<W>(&format!("/projects/{project_id}/versions.json"), &[])?.versions)
+    }
+
     pub fn priorities(&self) -> ApiResult<Vec<Priority>> {
         #[derive(serde::Deserialize)]
         struct W {
@@ -376,6 +405,11 @@ impl Client {
         }
         let w: W = self.post("/time_entries.json", &json!({ "time_entry": entry }))?;
         Ok(w.time_entry)
+    }
+
+    /// Actualiza los atributos indicados (nombres de la API: `status_id`, `done_ratio`…).
+    pub fn update_issue(&self, id: u32, fields: &serde_json::Map<String, Value>) -> ApiResult<()> {
+        self.put(&format!("/issues/{id}.json"), &json!({ "issue": fields }))
     }
 
     pub fn delete_time_entry(&self, id: u32) -> ApiResult<()> {

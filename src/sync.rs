@@ -752,6 +752,7 @@ mod live_tests {
                     dst_subject: subject.clone(),
                     dst_project_id: *project_id,
                     origin: LinkOrigin::Auto,
+                    synced: Default::default(),
                 });
             }
         }
@@ -783,5 +784,55 @@ mod live_tests {
         for t in created {
             b.delete_time_entry(t.id).unwrap();
         }
+
+        // ---- Igualar el issue de DESTINO con el de origen (#1 "Implementar login con OAuth").
+        use crate::issue_sync::{self, DiffCtx, Field, Pending};
+        let IssueState::Linked { dst_id, .. } = p.issues[&1].state.clone() else { panic!("#1 sin enlazar") };
+        let src_before = a.issue(1).unwrap();
+        let dst_before = b.issue(dst_id).unwrap();
+        let statuses = b.statuses().unwrap();
+        let priorities = b.priorities().unwrap();
+        let versions = HashMap::from([(dst_before.project.id, b.versions(dst_before.project.id).unwrap())]);
+        let fields = crate::store::IssueFields::default();
+        let diff = |m: &PairMappings| {
+            let ctx = DiffCtx {
+                pair: m,
+                fields: &fields,
+                respect_dst_changes: true,
+                dst_statuses: &statuses,
+                dst_priorities: &priorities,
+                dst_versions: &versions,
+            };
+            issue_sync::diff(&src_before, &dst_before, None, &ctx)
+        };
+        let d = diff(&m);
+        assert!(d.pending.contains(&Pending::Status("En curso".into())), "{:?}", d.pending);
+        m.set_status("En curso", "En progreso");
+        let d = diff(&m);
+        let changed: Vec<Field> = d.changes.iter().map(|c| c.field).collect();
+        println!("== Cambios en el destino: {:?}", d.changes.iter().map(|c| format!("{}: {} -> {}", c.field.label(), c.from, c.to)).collect::<Vec<_>>());
+        for f in [Field::Status, Field::DoneRatio, Field::Version] {
+            assert!(changed.contains(&f), "falta {f:?}");
+        }
+
+        let (after, ignored) = issue_sync::apply(&b, dst_id, &d.changes).expect("actualización");
+        assert!(ignored.is_empty(), "ignorados: {ignored:?}");
+        assert_eq!(after.status.name, "En progreso");
+        assert_eq!(after.done_ratio, Some(50.0));
+        assert_eq!(after.fixed_version.as_ref().map(|v| v.name.as_str()), Some("Sprint 23"));
+
+        // El origen solo se ha leído.
+        let src_after = a.issue(1).unwrap();
+        assert_eq!(
+            (src_after.status.id, src_after.done_ratio, src_after.fixed_version.map(|v| v.id), src_after.subject),
+            (src_before.status.id, src_before.done_ratio, src_before.fixed_version.as_ref().map(|v| v.id), src_before.subject.clone())
+        );
+
+        // Dejar el destino como estaba.
+        let mut restore = serde_json::Map::new();
+        restore.insert("status_id".into(), dst_before.status.id.into());
+        restore.insert("done_ratio".into(), (dst_before.done_ratio.unwrap_or(0.0) as u32).into());
+        restore.insert("fixed_version_id".into(), serde_json::Value::Null);
+        b.update_issue(dst_id, &restore).unwrap();
     }
 }

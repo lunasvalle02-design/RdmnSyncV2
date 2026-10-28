@@ -74,8 +74,8 @@ fn tokens_match(a: &str, b: &str) -> bool {
         || (short.len() >= 5 && strsim::jaro_winkler(a, b) >= 0.93)
 }
 
-/// Familias de nombres habituales de actividades, para sugerir mapeos entre nombres distintos.
-const ACTIVITY_FAMILIES: &[&[&str]] = &[
+/// Familias de nombres habituales (actividades y estados), para sugerir mapeos entre nombres distintos.
+const NAME_FAMILIES: &[&[&str]] = &[
     &["desarrollo", "desarrollar", "codificar", "codificacion", "programar", "programacion", "implementacion", "implementar", "development", "develop", "coding", "construccion"],
     &["pruebas", "prueba", "probar", "testing", "test", "tests", "qa", "verificacion", "validacion", "calidad"],
     &["diseno", "disenar", "design", "arquitectura", "maquetacion"],
@@ -87,12 +87,19 @@ const ACTIVITY_FAMILIES: &[&[&str]] = &[
     &["formacion", "training", "aprendizaje", "curso", "cursos"],
     &["despliegue", "desplegar", "deploy", "deployment", "implantacion", "puesta", "release"],
     &["revision", "review", "code review", "revisar"],
+    // Estados de issue
+    &["nueva", "nuevo", "new", "abierta", "abierto", "open", "pendiente", "por hacer", "to do", "todo"],
+    &["en curso", "en progreso", "in progress", "en desarrollo", "doing", "en proceso", "asignada", "iniciada"],
+    &["resuelta", "resuelto", "resolved", "hecha", "hecho", "done", "terminada", "completada", "implementada"],
+    &["cerrada", "cerrado", "closed", "finalizada", "finalizado"],
+    &["rechazada", "rechazado", "rejected", "descartada", "anulada", "cancelada"],
+    &["comentarios", "feedback", "en espera", "bloqueada", "bloqueado", "on hold", "esperando"],
 ];
 
 fn family_of(name: &str) -> Option<usize> {
     let n = normalize(name);
     let words: Vec<&str> = n.split_whitespace().collect();
-    ACTIVITY_FAMILIES
+    NAME_FAMILIES
         .iter()
         .position(|fam| fam.iter().any(|w| n == *w || words.contains(w)))
 }
@@ -260,6 +267,8 @@ mod tests {
         assert_eq!(suggest_name("Desarrollar", &c).unwrap().0, 0);
         assert_eq!(suggest_name("Pruebas", &c).unwrap().0, 2);
         assert_eq!(suggest_name("Reunión", &c).unwrap().0, 1);
+        let s = vec!["Nueva".to_string(), "En progreso".to_string(), "Cerrada".to_string()];
+        assert_eq!(suggest_name("En curso", &s).unwrap().0, 1);
     }
 
     #[test]

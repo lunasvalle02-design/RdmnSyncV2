@@ -29,6 +29,23 @@ issues = ENV.fetch('ISSUES', '').split('|').map do |subject|
   )
 end
 
+ENV.fetch('VERSIONS', '').split(',').each { |n| Version.find_or_create_by!(project: project, name: n) }
+
+if (rename = ENV['STATUS_RENAME'])
+  from, to = rename.split('=')
+  IssueStatus.find_by(name: from)&.update!(name: to)
+end
+
+# "índice;estado;%;versión" separados por |
+ENV.fetch('ISSUE_STATE', '').split('|').each do |spec|
+  idx, status, done, version = spec.split(';')
+  issue = issues[idx.to_i]
+  issue.status = IssueStatus.find_by!(name: status)
+  issue.done_ratio = done.to_i
+  issue.fixed_version = Version.find_by(project: project, name: version) if version
+  issue.save!
+end
+
 monday = Date.today.beginning_of_week
 ENV.fetch('ENTRIES', '').split('|').each do |spec|
   idx, day, hours, activity, comment = spec.split(';')

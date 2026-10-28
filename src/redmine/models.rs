@@ -72,6 +72,21 @@ pub struct Tracker {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct IssueStatus {
+    pub id: u32,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Version {
+    pub id: u32,
+    pub name: String,
+    /// `open`, `locked` o `closed`.
+    #[serde(default)]
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct Priority {
     pub id: u32,
     pub name: String,
@@ -130,6 +145,8 @@ pub struct Issue {
     pub estimated_hours: Option<f64>,
     #[serde(default)]
     pub spent_hours: Option<f64>,
+    #[serde(default)]
+    pub fixed_version: Option<IdName>,
     #[serde(default)]
     pub custom_fields: Vec<CustomFieldValue>,
 }
