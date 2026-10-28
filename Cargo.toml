@@ -1,0 +1,33 @@
+[package]
+name = "rdmnsync"
+version = "0.1.0"
+edition = "2024"
+description = "Mapeador de imputaciones entre instancias de Redmine"
+license = "MIT"
+rust-version = "1.95"
+
+[dependencies]
+egui = "0.37"
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "wayland", "x11", "persistence"] }
+egui_extras = { version = "0.37", default-features = false }
+egui-phosphor = "0.14"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "3", features = ["json", "platform-verifier"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+strsim = "0.11"
+deunicode = "1"
+directories = "6"
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3.6", features = ["windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3.6", features = ["sync-secret-service", "crypto-rust", "vendored"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

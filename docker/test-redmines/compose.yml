@@ -1,0 +1,13 @@
+# Dos Redmine de prueba con SQLite para probar la sincronización de extremo a extremo.
+#   docker compose -f docker/test-redmines/compose.yml up -d
+#   sh docker/test-redmines/seed.sh
+name: rdmnsync-test
+services:
+  cliente:
+    image: redmine:6.0
+    ports: ["3001:3000"]
+    volumes: ["./seed.rb:/seed/seed.rb:ro"]
+  interno:
+    image: redmine:6.0
+    ports: ["3002:3000"]
+    volumes: ["./seed.rb:/seed/seed.rb:ro"]
