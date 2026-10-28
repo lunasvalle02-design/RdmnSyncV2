@@ -268,6 +268,9 @@ Pila: Rust 2024, [egui/eframe](https://github.com/emilk/egui) 0.37, ureq 3, serd
 - Igualar cualquier issue enlazado, aunque no tenga imputaciones en el periodo.
 - Exportación del historial a CSV.
 
+Estos puntos se desarrollan, junto con otras propuestas de funcionalidades y mejoras y una
+planificación orientativa por versiones, en [PROPUESTAS.md](PROPUESTAS.md).
+
 ## Licencias
 
 - Código: MIT (declarada en `Cargo.toml`).

@@ -1,12 +1,13 @@
 # Compila los binarios de release para Windows y Linux dentro de Docker y los deja en dist\.
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
+$targetVolume = if ($env:RDMNSYNC_TARGET_VOLUME) { $env:RDMNSYNC_TARGET_VOLUME } else { "rdmnsync-target" }
 docker build -q -t rdmnsync-builder -f "$root\docker\Dockerfile" "$root\docker" | Out-Null
 New-Item -ItemType Directory -Force "$root\dist" | Out-Null
 docker run --rm `
   -v "${root}:/src" `
   -v rdmnsync-cargo-registry:/usr/local/cargo/registry `
-  -v rdmnsync-target:/target `
+  -v "${targetVolume}:/target" `
   -v "${root}\dist:/dist" `
   rdmnsync-builder sh -c @'
 set -e

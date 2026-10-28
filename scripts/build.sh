@@ -9,7 +9,7 @@ mkdir -p dist
 docker run --rm \
   -v "$ROOT:/src" \
   -v rdmnsync-cargo-registry:/usr/local/cargo/registry \
-  -v rdmnsync-target:/target \
+  -v "${RDMNSYNC_TARGET_VOLUME:-rdmnsync-target}:/target" \
   -v "$ROOT/dist:/dist" \
   rdmnsync-builder sh -c '
     set -e
