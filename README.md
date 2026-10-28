@@ -19,6 +19,9 @@ con emparejamiento automático de issues y mapeo aprendido de actividades.
     sugiere y **siempre pide confirmación**. Se recuerda por pareja de Redmines.
   - Evita duplicados con tres mecanismos: marca `[sync:<origen>#<id>]` en el comentario (solo en el
     destino), historial local, y detección de imputaciones iguales (día + horas + issue).
+- **Proyectos**: se mapean al confirmar imputaciones sin issue, al crear un issue, a mano en «Mapeos»
+  o confirmando la sugerencia que hace la app cuando la mayoría de issues enlazados de un proyecto de
+  origen están en el mismo proyecto de destino.
 - **Mapeos**: revisar/editar actividades, proyectos e issues aprendidos; **reglas por comentario**
   (p. ej. «reunión» → «Reuniones»); **historial con deshacer** (borra del destino lo creado en un envío).
 - **Resumen semanal**: horas por día en cada Redmine y diferencias, con acceso directo a sincronizar.

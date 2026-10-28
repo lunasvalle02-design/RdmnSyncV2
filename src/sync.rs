@@ -7,7 +7,7 @@ use crate::matching::{self, Candidate, Confidence};
 use crate::redmine::{
     Activity, Client, Issue, IssueQuery, NewTimeEntry, Project, TimeEntry, TimeEntryQuery,
 };
-use crate::store::{LedgerEntry, LinkOrigin, PairMappings, Settings};
+use crate::store::{LedgerEntry, LinkOrigin, PairMappings, ProjectLink, Settings};
 
 /// Longitud máxima del comentario de una imputación en Redmine.
 const MAX_COMMENT: usize = 1024;
@@ -176,6 +176,19 @@ pub struct Row {
     pub sync: RowSync,
     /// Actividad de destino forzada por una regla de comentario.
     pub rule_activity: Option<String>,
+}
+
+/// Mapeo de proyecto deducido de los issues enlazados.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectSuggestion {
+    pub src_id: u32,
+    pub src_name: String,
+    pub dst_id: u32,
+    pub dst_name: String,
+    /// Issues enlazados del proyecto de origen que están en `dst_id`.
+    pub agreeing: usize,
+    /// Issues enlazados del proyecto de origen en total.
+    pub linked: usize,
 }
 
 pub enum Readiness {
@@ -405,6 +418,53 @@ impl Plan {
         }
     }
 
+    /// Sugiere mapeos de proyecto para los proyectos de origen aún sin mapear: el proyecto de
+    /// destino donde está la mayoría (estricta) de sus issues enlazados.
+    pub fn project_suggestions(
+        &self,
+        known: &BTreeMap<u32, ProjectLink>,
+        dst_projects: &[Project],
+    ) -> Vec<ProjectSuggestion> {
+        let mut votes: BTreeMap<u32, (String, BTreeMap<u32, (usize, String)>)> = BTreeMap::new();
+        for res in self.issues.values() {
+            if let IssueState::Linked { project_id, project, .. } = &res.state {
+                let (_, by_dst) = votes
+                    .entry(res.src.project.id)
+                    .or_insert_with(|| (res.src.project.name.clone(), BTreeMap::new()));
+                let slot = by_dst.entry(*project_id).or_insert((0, project.clone()));
+                slot.0 += 1;
+            }
+        }
+        votes
+            .into_iter()
+            .filter(|(src_id, _)| {
+                !known.contains_key(src_id) && !self.projects.get(src_id).is_some_and(|r| r.confirmed)
+            })
+            .filter_map(|(src_id, (src_name, by_dst))| {
+                let linked: usize = by_dst.values().map(|(n, _)| n).sum();
+                let (dst_id, (agreeing, name)) = by_dst.into_iter().max_by_key(|(_, (n, _))| *n)?;
+                if agreeing * 2 <= linked {
+                    return None;
+                }
+                let dst_name = dst_projects
+                    .iter()
+                    .find(|p| p.id == dst_id)
+                    .map(|p| p.name.clone())
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or(name);
+                Some(ProjectSuggestion { src_id, src_name, dst_id, dst_name, agreeing, linked })
+            })
+            .collect()
+    }
+
+    /// Aplica al plan un mapeo de proyecto ya confirmado.
+    pub fn set_project(&mut self, src_id: u32, dst_id: u32, dst_name: &str) {
+        if let Some(res) = self.projects.get_mut(&src_id) {
+            res.dst = Some((dst_id, dst_name.to_string()));
+            res.confirmed = true;
+        }
+    }
+
     pub fn activity_for_row(&self, row: &Row) -> Option<String> {
         if let Some(a) = &row.rule_activity {
             return Some(a.clone());
@@ -539,6 +599,77 @@ pub fn execute(
             }
         };
         progress(&item, result);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn issue(id: u32, project: u32) -> Issue {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "subject": format!("Issue {id}"),
+            "project": {"id": project, "name": format!("Origen {project}")},
+            "tracker": {"id": 1, "name": "Tarea"}, "status": {"id": 1, "name": "Nueva"},
+            "priority": {"id": 2, "name": "Normal"}
+        }))
+        .unwrap()
+    }
+
+    fn plan_with(links: &[(u32, u32, Option<u32>)]) -> Plan {
+        // (issue de origen, proyecto de origen, proyecto de destino si está enlazado)
+        let issues = links
+            .iter()
+            .map(|&(id, src_p, dst_p)| {
+                let state = match dst_p {
+                    Some(p) => IssueState::Linked {
+                        dst_id: id + 100,
+                        subject: String::new(),
+                        project_id: p,
+                        project: format!("Destino {p}"),
+                        origin: LinkOrigin::Confirmed,
+                        score: 1.0,
+                    },
+                    None => IssueState::Pending(Confidence::NotFound),
+                };
+                (id, IssueRes { src: issue(id, src_p), state, candidates: vec![], choice: 0, manual: String::new() })
+            })
+            .collect();
+        Plan {
+            src_id: "a".into(),
+            src_base: String::new(),
+            dst_base: String::new(),
+            data: SyncData {
+                entries: vec![],
+                src_issues: HashMap::new(),
+                dst_entries: vec![],
+                dst_pool: vec![],
+                dst_activities: vec![],
+            },
+            rows: vec![],
+            issues,
+            projects: BTreeMap::new(),
+            activities: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn suggests_majority_project() {
+        let plan = plan_with(&[(1, 10, Some(7)), (2, 10, Some(7)), (3, 10, Some(8)), (4, 10, None)]);
+        let s = plan.project_suggestions(&BTreeMap::new(), &[]);
+        assert_eq!(s.len(), 1);
+        assert_eq!((s[0].src_id, s[0].dst_id, s[0].agreeing, s[0].linked), (10, 7, 2, 3));
+        assert_eq!(s[0].dst_name, "Destino 7");
+    }
+
+    #[test]
+    fn no_suggestion_on_tie_or_when_known() {
+        let tie = plan_with(&[(1, 10, Some(7)), (2, 10, Some(8))]);
+        assert!(tie.project_suggestions(&BTreeMap::new(), &[]).is_empty());
+
+        let plan = plan_with(&[(1, 10, Some(7))]);
+        let known = BTreeMap::from([(10, ProjectLink { src_name: String::new(), dst_id: 9, dst_name: String::new() })]);
+        assert!(plan.project_suggestions(&known, &[]).is_empty());
     }
 }
 

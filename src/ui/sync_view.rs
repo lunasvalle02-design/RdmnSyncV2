@@ -1,6 +1,6 @@
 //! Asistente de sincronización: análisis, resolución de dudas, creación de issues y envío.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{Duration, Local};
 use egui::{Align, Layout, Margin, RichText, TextEdit, Ui, vec2};
@@ -12,7 +12,9 @@ use crate::redmine::{
     CustomFieldInput, CustomFieldValue, Issue, NewIssue, Priority, TimeEntry, Tracker,
 };
 use crate::store::{IssueLink, LedgerEntry, LinkOrigin, ProjectLink, pair_key};
-use crate::sync::{self, ExecItem, IssueState, Plan, PlanInput, Readiness, RowSync, SyncData};
+use crate::sync::{
+    self, ExecItem, IssueState, Plan, PlanInput, ProjectSuggestion, Readiness, RowSync, SyncData,
+};
 use crate::theme::{self, icon};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -38,6 +40,8 @@ pub struct SyncState {
     exec: Option<ExecProgress>,
     create: Option<CreateDialog>,
     only_pending: bool,
+    /// Sugerencias de proyecto descartadas en este análisis.
+    dismissed_projects: HashSet<u32>,
 }
 
 struct ExecProgress {
@@ -67,6 +71,7 @@ impl Default for SyncState {
             exec: None,
             create: None,
             only_pending: false,
+            dismissed_projects: HashSet::new(),
         }
     }
 }
@@ -372,6 +377,7 @@ fn analyze(app: &mut App) {
     st.error = None;
     st.plan = None;
     st.exec = None;
+    st.dismissed_projects.clear();
     let seq = st.seq;
     let req = sync::LoadRequest {
         src: s.client.clone(),
@@ -655,40 +661,101 @@ fn pending_projects(app: &mut App, ui: &mut Ui) {
     let p = theme::palette(ui);
     let (Some(src), Some(dst)) = (app.sync.src.clone(), app.sync.dst.clone()) else { return };
     let Some(dst_projects) = app.sessions.get(&dst).map(|s| s.projects.clone()) else { return };
+    let known = app.store.pair(&src, &dst).projects;
     let Some(plan) = app.sync.plan.as_mut() else { return };
-    if plan.projects.values().all(|r| r.confirmed) {
+
+    let suggestions = plan.project_suggestions(&known, &dst_projects);
+    // Las imputaciones sin issue parten de la sugerencia deducida de los issues enlazados.
+    for s in &suggestions {
+        if let Some(res) = plan.projects.get_mut(&s.src_id)
+            && !res.confirmed
+            && res.dst.is_none()
+        {
+            res.dst = Some((s.dst_id, s.dst_name.clone()));
+        }
+    }
+    let extra: Vec<&ProjectSuggestion> = suggestions
+        .iter()
+        .filter(|s| !plan.projects.contains_key(&s.src_id) && !app.sync.dismissed_projects.contains(&s.src_id))
+        .collect();
+    let pending_rows = plan.projects.values().any(|r| !r.confirmed);
+    if !pending_rows && extra.is_empty() {
         return;
     }
-    let mut confirmed = Vec::new();
+
+    let mut confirmed: Vec<(u32, String, u32, String)> = Vec::new();
+    let mut dismissed = Vec::new();
     theme::section_title(ui, icon::FOLDERS, "Proyectos de destino");
     theme::card(ui, |ui| {
-        ui.label(weak(ui, "Hay imputaciones sin issue. Elige en qué proyecto del destino se registrarán."));
-        ui.add_space(6.0);
-        egui::Grid::new("proj_grid").num_columns(4).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
-            for (src_id, res) in plan.projects.iter_mut().filter(|(_, r)| !r.confirmed) {
-                ui.label(RichText::new(&res.src_name).family(theme::semibold()));
-                ui.label(RichText::new(icon::ARROW_RIGHT).color(p.text_weak));
-                egui::ComboBox::from_id_salt(("proj", *src_id))
-                    .selected_text(res.dst.as_ref().map(|d| d.1.clone()).unwrap_or_else(|| "Elegir…".into()))
-                    .width(280.0)
-                    .show_ui(ui, |ui| {
-                        for dp in &dst_projects {
-                            ui.selectable_value(&mut res.dst, Some((dp.id, dp.name.clone())), &dp.name);
+        if pending_rows {
+            ui.label(weak(ui, "Hay imputaciones sin issue. Elige en qué proyecto del destino se registrarán."));
+            ui.add_space(6.0);
+            egui::Grid::new("proj_grid").num_columns(4).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
+                for (src_id, res) in plan.projects.iter_mut().filter(|(_, r)| !r.confirmed) {
+                    ui.label(RichText::new(&res.src_name).family(theme::semibold()));
+                    ui.label(RichText::new(icon::ARROW_RIGHT).color(p.text_weak));
+                    egui::ComboBox::from_id_salt(("proj", *src_id))
+                        .selected_text(res.dst.as_ref().map(|d| d.1.clone()).unwrap_or_else(|| "Elegir…".into()))
+                        .width(280.0)
+                        .show_ui(ui, |ui| {
+                            for dp in &dst_projects {
+                                ui.selectable_value(&mut res.dst, Some((dp.id, dp.name.clone())), &dp.name);
+                            }
+                        });
+                    ui.horizontal(|ui| {
+                        ui.add_enabled_ui(res.dst.is_some(), |ui| {
+                            if ui.button(format!("{}  Confirmar", icon::CHECK)).clicked()
+                                && let Some((id, name)) = &res.dst
+                            {
+                                confirmed.push((*src_id, res.src_name.clone(), *id, name.clone()));
+                            }
+                        });
+                        let hint = suggestions
+                            .iter()
+                            .find(|s| s.src_id == *src_id && res.dst.as_ref().map(|d| d.0) == Some(s.dst_id));
+                        if let Some(s) = hint {
+                            theme::badge(ui, format!("sugerido · {} de {} issues", s.agreeing, s.linked), p.info)
+                                .on_hover_text("Es el proyecto donde están la mayoría de sus issues enlazados");
                         }
                     });
-                ui.add_enabled_ui(res.dst.is_some(), |ui| {
-                    if ui.button(format!("{}  Confirmar", icon::CHECK)).clicked() {
-                        res.confirmed = true;
-                        if let Some((id, name)) = &res.dst {
-                            confirmed.push((*src_id, res.src_name.clone(), *id, name.clone()));
-                        }
-                    }
-                });
-                ui.end_row();
+                    ui.end_row();
+                }
+            });
+        }
+        if !extra.is_empty() {
+            if pending_rows {
+                ui.separator();
             }
-        });
+            ui.label(weak(
+                ui,
+                "Según los issues enlazados, estos proyectos parecen corresponderse. Si lo confirmas, se \
+                 usará para buscar issues en próximos análisis y como proyecto por defecto al crearlos.",
+            ));
+            ui.add_space(6.0);
+            egui::Grid::new("proj_suggest_grid").num_columns(5).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
+                for s in &extra {
+                    ui.label(RichText::new(&s.src_name).family(theme::semibold()));
+                    ui.label(RichText::new(icon::ARROW_RIGHT).color(p.text_weak));
+                    ui.label(&s.dst_name);
+                    theme::badge(ui, format!("{} de {} issues", s.agreeing, s.linked), p.info);
+                    ui.horizontal(|ui| {
+                        if ui.button(format!("{}  Confirmar", icon::CHECK)).clicked() {
+                            confirmed.push((s.src_id, s.src_name.clone(), s.dst_id, s.dst_name.clone()));
+                        }
+                        if ui.button(RichText::new("Ignorar").color(p.text_weak)).clicked() {
+                            dismissed.push(s.src_id);
+                        }
+                    });
+                    ui.end_row();
+                }
+            });
+        }
     });
+    app.sync.dismissed_projects.extend(dismissed);
     if !confirmed.is_empty() {
+        for (sid, _, did, dname) in &confirmed {
+            plan.set_project(*sid, *did, dname);
+        }
         let pair = app.store.pair_mut(&src, &dst);
         for (sid, sname, did, dname) in confirmed {
             pair.projects.insert(sid, ProjectLink { src_name: sname, dst_id: did, dst_name: dname });

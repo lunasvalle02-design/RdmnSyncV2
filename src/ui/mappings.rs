@@ -7,7 +7,8 @@ use egui_extras::{Column, TableBuilder};
 
 use crate::app::{App, Msg, ToastKind, dates, weak};
 use crate::matching::normalize;
-use crate::store::{CommentRule, pair_key};
+use crate::redmine::Project;
+use crate::store::{CommentRule, ProjectLink, pair_key};
 use crate::theme::{self, icon};
 
 #[derive(Default)]
@@ -19,6 +20,8 @@ pub struct MappingsState {
     new_act_dst: Option<String>,
     new_rule_text: String,
     new_rule_act: Option<String>,
+    new_proj_src: Option<(u32, String)>,
+    new_proj_dst: Option<(u32, String)>,
     undoing: Option<String>,
 }
 
@@ -224,28 +227,93 @@ fn rules(app: &mut App, ui: &mut Ui, src: &str, dst: &str) {
     }
 }
 
+fn project_combo(
+    ui: &mut Ui,
+    id: impl egui::AsIdSalt,
+    value: &mut Option<(u32, String)>,
+    options: &[Project],
+    width: f32,
+) -> bool {
+    let before = value.clone();
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(value.as_ref().map(|v| v.1.clone()).unwrap_or_else(|| "Elegir…".into()))
+        .width(width)
+        .show_ui(ui, |ui| {
+            for p in options {
+                ui.selectable_value(value, Some((p.id, p.name.clone())), &p.name);
+            }
+        });
+    *value != before
+}
+
 fn projects(app: &mut App, ui: &mut Ui, src: &str, dst: &str) {
-    let pair = app.store.pair(src, dst);
-    let mut remove = None;
+    let p = theme::palette(ui);
+    let src_projects = app.sessions.get(src).map(|s| s.projects.clone()).unwrap_or_default();
+    let dst_projects = app.sessions.get(dst).map(|s| s.projects.clone()).unwrap_or_default();
+    let mut pair = app.store.pair(src, dst);
+    let mut changed = false;
     theme::section_title(ui, icon::FOLDERS, "Proyectos");
     theme::card(ui, |ui| {
+        ui.label(weak(
+            ui,
+            "Se usan para las imputaciones sin issue, para buscar issues equivalentes y como proyecto \
+             por defecto al crear un issue.",
+        ));
+        ui.add_space(4.0);
         if pair.projects.is_empty() {
             ui.label(weak(ui, "Sin proyectos mapeados."));
         }
-        egui::Grid::new("map_projects").num_columns(4).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
-            for (id, link) in &pair.projects {
-                ui.label(&link.src_name);
-                ui.label(weak(ui, icon::ARROW_RIGHT));
-                ui.label(&link.dst_name);
-                if theme::icon_button(ui, icon::TRASH, "Olvidar").clicked() {
+        let mut remove = None;
+        egui::Grid::new("map_projects").num_columns(4).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
+            for (id, link) in pair.projects.iter_mut() {
+                ui.label(RichText::new(&link.src_name).family(theme::semibold()));
+                ui.label(RichText::new(icon::ARROW_RIGHT).color(p.text_weak));
+                if dst_projects.is_empty() {
+                    ui.label(&link.dst_name);
+                } else {
+                    let mut v = Some((link.dst_id, link.dst_name.clone()));
+                    if project_combo(ui, ("map_proj", *id), &mut v, &dst_projects, 280.0)
+                        && let Some((did, dname)) = v
+                    {
+                        link.dst_id = did;
+                        link.dst_name = dname;
+                        changed = true;
+                    }
+                }
+                if theme::icon_button(ui, icon::TRASH, "Olvidar este mapeo").clicked() {
                     remove = Some(*id);
                 }
                 ui.end_row();
             }
         });
+        if let Some(id) = remove {
+            pair.projects.remove(&id);
+            changed = true;
+        }
+        if src_projects.is_empty() || dst_projects.is_empty() {
+            ui.label(weak(ui, "Conecta ambos Redmines para añadir o editar proyectos."));
+            return;
+        }
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label(weak(ui, "Añadir"));
+            let st = &mut app.mappings;
+            let unmapped: Vec<Project> =
+                src_projects.iter().filter(|p| !pair.projects.contains_key(&p.id)).cloned().collect();
+            project_combo(ui, "new_proj_src", &mut st.new_proj_src, &unmapped, 240.0);
+            ui.label(RichText::new(icon::ARROW_RIGHT).color(p.text_weak));
+            project_combo(ui, "new_proj_dst", &mut st.new_proj_dst, &dst_projects, 260.0);
+            let ok = st.new_proj_src.is_some() && st.new_proj_dst.is_some();
+            if ui.add_enabled(ok, egui::Button::new(format!("{}  Guardar", icon::PLUS))).clicked()
+                && let (Some((sid, sname)), Some((did, dname))) = (st.new_proj_src.take(), st.new_proj_dst.take())
+            {
+                pair.projects.insert(sid, ProjectLink { src_name: sname, dst_id: did, dst_name: dname });
+                changed = true;
+            }
+        });
     });
-    if let Some(id) = remove {
-        app.store.pair_mut(src, dst).projects.remove(&id);
+    if changed {
+        *app.store.pair_mut(src, dst) = pair;
         app.save();
     }
 }
