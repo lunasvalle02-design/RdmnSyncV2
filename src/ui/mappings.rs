@@ -154,7 +154,7 @@ fn activities(app: &mut App, ui: &mut Ui, src: &str, dst: &str) {
                         changed = true;
                     }
                 }
-                if theme::icon_button(ui, icon::TRASH, "Olvidar este mapeo").clicked() {
+                if theme::icon_button_danger(ui, icon::TRASH, "Olvidar este mapeo").clicked() {
                     remove = Some(key.clone());
                 }
                 ui.end_row();
@@ -211,7 +211,7 @@ fn rules(app: &mut App, ui: &mut Ui, src: &str, dst: &str) {
                     rule.dst_activity = v.unwrap_or_default();
                     changed = true;
                 }
-                if theme::icon_button(ui, icon::TRASH, "Eliminar regla").clicked() {
+                if theme::icon_button_danger(ui, icon::TRASH, "Eliminar regla").clicked() {
                     remove = Some(i);
                 }
             });
@@ -296,7 +296,7 @@ fn projects(app: &mut App, ui: &mut Ui, src: &str, dst: &str) {
                         changed = true;
                     }
                 }
-                if theme::icon_button(ui, icon::TRASH, "Olvidar este mapeo").clicked() {
+                if theme::icon_button_danger(ui, icon::TRASH, "Olvidar este mapeo").clicked() {
                     remove = Some(*id);
                 }
                 ui.end_row();
@@ -362,7 +362,7 @@ fn statuses(app: &mut App, ui: &mut Ui, src: &str, dst: &str) {
                         changed = true;
                     }
                 }
-                if theme::icon_button(ui, icon::TRASH, "Olvidar este mapeo").clicked() {
+                if theme::icon_button_danger(ui, icon::TRASH, "Olvidar este mapeo").clicked() {
                     remove = Some(key.clone());
                 }
                 ui.end_row();
@@ -474,7 +474,7 @@ fn versions(app: &mut App, ui: &mut Ui, src: &str, dst: &str) {
                         ui.label(weak(ui, format!("· {}", link.dst_project)));
                     }
                 });
-                if theme::icon_button(ui, icon::TRASH, "Olvidar este mapeo").clicked() {
+                if theme::icon_button_danger(ui, icon::TRASH, "Olvidar este mapeo").clicked() {
                     remove = Some(*id);
                 }
                 ui.end_row();
@@ -587,6 +587,7 @@ fn issues(app: &mut App, ui: &mut Ui, src: &str, dst: &str) {
         TableBuilder::new(ui)
             .id_salt("map_issues")
             .striped(true)
+            .sense(egui::Sense::click())
             .vscroll(false)
             .cell_layout(Layout::left_to_right(Align::Center))
             .column(Column::remainder().at_least(200.0).clip(true))
@@ -622,7 +623,7 @@ fn issues(app: &mut App, ui: &mut Ui, src: &str, dst: &str) {
                             theme::badge(ui, l.origin.label(), color);
                         });
                         row.col(|ui| {
-                            if theme::icon_button(ui, icon::LINK_BREAK, "Desenlazar").clicked() {
+                            if theme::icon_button_danger(ui, icon::LINK_BREAK, "Desenlazar").clicked() {
                                 remove = Some(**id);
                             }
                         });

@@ -17,25 +17,27 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         theme::section_title(ui, icon::PALETTE, "Apariencia");
         theme::card(ui, |ui| {
             ui.horizontal(|ui| {
-                if theme::pill(ui, s.dark_mode, format!("{}  Oscuro", icon::MOON)).clicked() && !s.dark_mode {
-                    s.dark_mode = true;
-                    ui.ctx().set_theme(Theme::Dark);
-                    changed = true;
-                }
-                if theme::pill(ui, !s.dark_mode, format!("{}  Claro", icon::SUN)).clicked() && s.dark_mode {
-                    s.dark_mode = false;
-                    ui.ctx().set_theme(Theme::Light);
+                let labels = [format!("{}  Oscuro", icon::MOON), format!("{}  Claro", icon::SUN)];
+                let current = if s.dark_mode { 0 } else { 1 };
+                if let Some(i) = theme::segmented(ui, "settings_theme", Some(current), &labels)
+                    && i != current
+                {
+                    s.dark_mode = i == 0;
+                    ui.ctx().set_theme(if s.dark_mode { Theme::Dark } else { Theme::Light });
                     changed = true;
                 }
             });
         });
-        ui.add_space(12.0);
+        ui.add_space(18.0);
 
         theme::section_title(ui, icon::ARROWS_CLOCKWISE, "Sincronización");
         theme::card(ui, |ui| {
-            changed |= ui
-                .checkbox(&mut s.add_marker, "Añadir la marca [sync:origen#id] al comentario en el Redmine de destino")
-                .changed();
+            changed |= theme::switch(
+                ui,
+                &mut s.add_marker,
+                "Añadir la marca [sync:origen#id] al comentario en el Redmine de destino",
+            )
+            .changed();
             ui.label(weak(
                 ui,
                 "Permite detectar imputaciones ya sincronizadas aunque se pierda el historial local. \
@@ -63,38 +65,45 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                  Una referencia explícita (la URL del issue de origen) siempre cuenta como 100 %.",
             ));
         });
-        ui.add_space(12.0);
+        ui.add_space(18.0);
 
         theme::section_title(ui, icon::NOTE_PENCIL, "Actualización de issues de destino");
         theme::card(ui, |ui| {
-            changed |= ui
-                .checkbox(&mut s.update_issues, "Igualar los issues de destino con los de origen al sincronizar")
-                .changed();
+            changed |= theme::switch(
+                ui,
+                &mut s.update_issues,
+                "Igualar los issues de destino con los de origen al sincronizar",
+            )
+            .changed();
             ui.label(weak(ui, "Solo se modifica el issue de destino; el de origen se usa únicamente como fuente de datos."));
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             ui.add_enabled_ui(s.update_issues, |ui| {
                 let f = &mut s.issue_fields;
                 ui.horizontal_wrapped(|ui| {
-                    changed |= ui.checkbox(&mut f.status, "Estado").changed();
-                    changed |= ui.checkbox(&mut f.done_ratio, "% realizado").changed();
-                    changed |= ui.checkbox(&mut f.dates, "Fechas de inicio y fin").changed();
-                    changed |= ui.checkbox(&mut f.estimated, "Estimación").changed();
-                    changed |= ui.checkbox(&mut f.version, "Versión prevista").changed();
-                    changed |= ui.checkbox(&mut f.priority, "Prioridad").changed();
-                    changed |= ui.checkbox(&mut f.subject, "Asunto").changed();
-                    changed |= ui.checkbox(&mut f.description, "Descripción").changed();
+                    changed |= theme::checkbox(ui, &mut f.status, "Estado").changed();
+                    changed |= theme::checkbox(ui, &mut f.done_ratio, "% realizado").changed();
+                    changed |= theme::checkbox(ui, &mut f.dates, "Fechas de inicio y fin").changed();
+                    changed |= theme::checkbox(ui, &mut f.estimated, "Estimación").changed();
+                    changed |= theme::checkbox(ui, &mut f.version, "Versión prevista").changed();
+                    changed |= theme::checkbox(ui, &mut f.priority, "Prioridad").changed();
+                    changed |= theme::checkbox(ui, &mut f.subject, "Asunto").changed();
+                    changed |= theme::checkbox(ui, &mut f.description, "Descripción").changed();
                 });
-                ui.add_space(6.0);
-                changed |= ui
-                    .checkbox(&mut s.respect_dst_changes, "Respetar los cambios hechos directamente en el destino")
-                    .changed();
+                ui.add_space(8.0);
+                changed |= theme::switch(
+                    ui,
+                    &mut s.respect_dst_changes,
+                    "Respetar los cambios hechos directamente en el destino",
+                )
+                .changed();
                 ui.label(weak(
                     ui,
-                    "Si un campo no ha cambiado en el origen desde la última sincronización, no se                      sobrescribe aunque alguien lo haya modificado en el destino.",
+                    "Si un campo no ha cambiado en el origen desde la última sincronización, no se \
+                     sobrescribe aunque alguien lo haya modificado en el destino.",
                 ));
             });
         });
-        ui.add_space(12.0);
+        ui.add_space(18.0);
 
         theme::section_title(ui, icon::DATABASE, "Datos");
         theme::card(ui, |ui| {
@@ -108,7 +117,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 manage = true;
             }
         });
-        ui.add_space(12.0);
+        ui.add_space(18.0);
         ui.label(weak(ui, format!("RdmnSync {}", env!("CARGO_PKG_VERSION"))));
     });
     if manage {

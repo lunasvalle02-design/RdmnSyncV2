@@ -700,7 +700,7 @@ fn issue_updates(app: &mut App, ui: &mut Ui, diffs: &[IssueDiff]) {
             };
             ui.horizontal(|ui| {
                 let mut include = !app.sync.issue_skip.contains(&d.src_id);
-                if ui.add_enabled(!busy, egui::Checkbox::without_text(&mut include)).changed() {
+                if ui.add_enabled_ui(!busy, |ui| theme::checkbox(ui, &mut include, "")).inner.changed() {
                     toggles.push((d.src_id, include));
                 }
                 ui.label(weak(ui, format!("#{}", d.src_id)));
@@ -792,18 +792,14 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             return;
         }
         config_card(app, ui, &connected);
-        ui.add_space(14.0);
+        ui.add_space(16.0);
 
         let p = theme::palette(ui);
         if let Some(e) = app.sync.error.clone() {
             theme::callout(ui, icon::WARNING_OCTAGON, p.danger, e);
         }
         if app.sync.loading {
-            ui.vertical_centered(|ui| {
-                ui.add_space(30.0);
-                ui.spinner();
-                ui.label(weak(ui, "Leyendo imputaciones y buscando issues equivalentes…"));
-            });
+            theme::loading(ui, "Leyendo imputaciones y buscando issues equivalentes…");
             return;
         }
         if app.sync.plan.is_none() {
@@ -816,13 +812,13 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             return;
         }
         stats(app, ui);
-        ui.add_space(12.0);
+        ui.add_space(16.0);
         pending_activities(app, ui);
         pending_projects(app, ui);
         pending_issues(app, ui);
         issue_updates(app, ui, &diffs);
         rows_table(app, ui);
-        ui.add_space(12.0);
+        ui.add_space(16.0);
         footer(app, ui, &diffs);
     });
 
@@ -849,18 +845,19 @@ fn config_card(app: &mut App, ui: &mut Ui, connected: &[String]) {
                     app.sync.src = before;
                 }
             });
-            ui.add_space(4.0);
+            ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
                 ui.label(weak(ui, "Periodo"));
-                for (preset, label) in [
+                let presets = [
                     (Preset::ThisWeek, "Esta semana"),
                     (Preset::LastWeek, "Semana pasada"),
                     (Preset::ThisMonth, "Este mes"),
                     (Preset::LastMonth, "Mes pasado"),
-                ] {
-                    if theme::pill(ui, app.sync.preset == preset, label).clicked() {
-                        app.sync.apply_preset(preset);
-                    }
+                ];
+                let labels = presets.map(|(_, label)| label);
+                let current = presets.iter().position(|(p, _)| *p == app.sync.preset);
+                if let Some(i) = theme::segmented(ui, "sync_presets", current, &labels) {
+                    app.sync.apply_preset(presets[i].0);
                 }
                 ui.add_space(8.0);
                 ui.label(icon::CALENDAR_BLANK);
@@ -871,7 +868,7 @@ fn config_card(app: &mut App, ui: &mut Ui, connected: &[String]) {
                     app.sync.preset = Preset::Custom;
                 }
             });
-            ui.add_space(4.0);
+            ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.label(weak(ui, "Proyecto de origen"));
                 let projects = app.sync.src.as_ref().and_then(|s| app.sessions.get(s)).map(|s| &s.projects);
@@ -926,11 +923,12 @@ fn stats(app: &mut App, ui: &mut Ui) {
             _ => {}
         }
     }
-    ui.horizontal(|ui| {
-        theme::stat(ui, icon::CLOCK, &format!("imputaciones en origen · {}", theme::hours(total_h)), plan.rows.len().to_string(), p.accent);
-        theme::stat(ui, icon::CHECK_CIRCLE, &format!("listas para enviar · {}", theme::hours(ready_h)), ready.to_string(), p.success);
-        theme::stat(ui, icon::QUESTION, "requieren tu atención", blocked.to_string(), p.warning);
-        theme::stat(ui, icon::LINK, "ya sincronizadas", done.to_string(), p.info);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
+        theme::stat(ui, icon::CLOCK, &format!("imputaciones en origen · {}", theme::hours(total_h)), plan.rows.len(), p.accent);
+        theme::stat(ui, icon::CHECK_CIRCLE, &format!("listas para enviar · {}", theme::hours(ready_h)), ready, p.success);
+        theme::stat(ui, icon::QUESTION, "requieren tu atención", blocked, p.warning);
+        theme::stat(ui, icon::LINK, "ya sincronizadas", done, p.info);
     });
 }
 
@@ -1252,7 +1250,7 @@ fn rows_table(app: &mut App, ui: &mut Ui) {
     ui.horizontal(|ui| {
         theme::section_title(ui, icon::LIST_CHECKS, "Imputaciones");
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.toggle_value(&mut app.sync.only_pending, "Ocultar ya sincronizadas");
+            theme::toggle_chip(ui, &mut app.sync.only_pending, format!("{}  Ocultar ya sincronizadas", icon::EYE_SLASH));
         });
     });
     if plan.rows.is_empty() {
@@ -1269,6 +1267,7 @@ fn rows_table(app: &mut App, ui: &mut Ui) {
         TableBuilder::new(ui)
             .id_salt("plan_rows")
             .striped(true)
+            .sense(egui::Sense::click())
             .vscroll(false)
             .cell_layout(Layout::left_to_right(Align::Center))
             .column(Column::exact(28.0))
@@ -1293,7 +1292,7 @@ fn rows_table(app: &mut App, ui: &mut Ui) {
                     let finished = matches!(readiness, Readiness::Finished);
                     row.col(|ui| {
                         let mut inc = r.include;
-                        if ui.add_enabled(!finished && !busy, egui::Checkbox::without_text(&mut inc)).changed() {
+                        if ui.add_enabled_ui(!finished && !busy, |ui| theme::checkbox(ui, &mut inc, "")).inner.changed() {
                             toggles.push((idx, inc));
                         }
                     });
@@ -1422,6 +1421,7 @@ fn footer(app: &mut App, ui: &mut Ui, diffs: &[IssueDiff]) {
     theme::card(ui, |ui| {
         if let Some(exec) = &app.sync.exec {
             let frac = exec.done as f32 / exec.total.max(1) as f32;
+            let frac = theme::ease_to_from(ui, ui.scope_id().with("exec_progress"), frac, 0.4, 0.0);
             ui.add(
                 egui::ProgressBar::new(frac)
                     .text(format!(
@@ -1434,11 +1434,11 @@ fn footer(app: &mut App, ui: &mut Ui, diffs: &[IssueDiff]) {
         }
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                settings_changed |= ui
-                    .checkbox(
-                        &mut app.store.settings.update_issues,
-                        "Igualar también los issues de destino con los de origen",
-                    )
+                settings_changed |= theme::checkbox(
+                    ui,
+                    &mut app.store.settings.update_issues,
+                    "Igualar también los issues de destino con los de origen",
+                )
                     .on_hover_text("Estado, % realizado, fechas, estimación y versión (configurable en Ajustes). El issue de origen nunca se modifica.")
                     .changed();
                 let marker = if app.store.settings.add_marker {
@@ -1697,8 +1697,8 @@ fn create_dialog(app: &mut App, ui: &mut Ui) {
 
                 ui.label("");
                 ui.vertical(|ui| {
-                    ui.checkbox(&mut dlg.assign_to_me, "Asignármelo");
-                    ui.checkbox(&mut dlg.add_reference, "Añadir enlace al issue de origen en la descripción")
+                    theme::checkbox(ui, &mut dlg.assign_to_me, "Asignármelo");
+                    theme::checkbox(ui, &mut dlg.add_reference, "Añadir enlace al issue de origen en la descripción")
                         .on_hover_text("Permite reconocer el emparejamiento automáticamente en el futuro.");
                 });
                 ui.end_row();
