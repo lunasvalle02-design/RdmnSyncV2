@@ -5,11 +5,12 @@ use std::time::{Duration, Instant};
 
 use egui::{Align, Layout, Margin, RichText, Stroke, Theme, Ui};
 
-use crate::redmine::{
+use rdmnsync_core::redmine::{
     Activity, Client, CustomFieldValue, Issue, IssueStatus, Priority, Project, TimeEntry, Tracker, User, Version,
 };
-use crate::store::Store;
-use crate::sync::{ExecItem, SyncData};
+use rdmnsync_core::store::Store;
+use rdmnsync_core::sync::{ExecItem, SyncData};
+
 use crate::theme::{self, icon};
 use crate::ui::{explorer, login, mappings, settings, summary, sync_view};
 use crate::worker::Worker;
@@ -371,45 +372,4 @@ pub fn page(ui: &mut Ui, id: &str, add: impl FnOnce(&mut Ui)) {
 
 pub fn weak(ui: &Ui, text: impl Into<String>) -> RichText {
     RichText::new(text.into()).color(theme::palette(ui).text_weak)
-}
-
-pub mod dates {
-    use chrono::{Datelike, Duration, Local, NaiveDate};
-
-    pub fn today() -> NaiveDate {
-        Local::now().date_naive()
-    }
-
-    pub fn week_of(d: NaiveDate) -> (NaiveDate, NaiveDate) {
-        let monday = d - Duration::days(d.weekday().num_days_from_monday() as i64);
-        (monday, monday + Duration::days(6))
-    }
-
-    pub fn month_of(d: NaiveDate) -> (NaiveDate, NaiveDate) {
-        let first = d.with_day(1).unwrap_or(d);
-        let next = if first.month() == 12 {
-            NaiveDate::from_ymd_opt(first.year() + 1, 1, 1)
-        } else {
-            NaiveDate::from_ymd_opt(first.year(), first.month() + 1, 1)
-        };
-        (first, next.map(|n| n - Duration::days(1)).unwrap_or(first))
-    }
-
-    pub fn parse(s: &str) -> Option<NaiveDate> {
-        NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").ok()
-    }
-
-    pub fn iso(d: NaiveDate) -> String {
-        d.format("%Y-%m-%d").to_string()
-    }
-
-    pub fn weekday_es(d: NaiveDate) -> &'static str {
-        ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
-            [d.weekday().num_days_from_monday() as usize]
-    }
-
-    /// "2026-10-28" → "28/10/2026"
-    pub fn pretty(s: &str) -> String {
-        parse(s).map(|d| d.format("%d/%m/%Y").to_string()).unwrap_or_else(|| s.to_string())
-    }
 }

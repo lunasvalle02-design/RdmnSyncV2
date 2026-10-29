@@ -1,12 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
-mod issue_sync;
-mod matching;
-mod redmine;
-mod secrets;
-mod store;
-mod sync;
 mod theme;
 mod ui;
 mod worker;

@@ -73,16 +73,23 @@ los contenedores; no dejes configuración de prueba en el equipo del usuario.
 
 ## Arquitectura
 
+El repositorio es un *workspace*: el motor vive en la biblioteca `crates/rdmnsync-core` (sin egui; se
+importa como `rdmnsync_core::…`) y la aplicación de escritorio en `src/`. El motor no puede depender
+de la interfaz: lo que necesiten ambos (fechas, formato de horas) va en el motor.
+
+`core/` abrevia `crates/rdmnsync-core/src/`.
+
 | Módulo | Responsabilidad |
 |---|---|
-| `src/redmine/` | Cliente REST bloqueante (ureq 3; `http_status_as_error(false)` para leer errores 422) y modelos serde |
-| `src/matching.rs` | `normalize`, `similarity`, familias de sinónimos (`NAME_FAMILIES`), ranking de candidatos, marca `[sync:…]` |
-| `src/sync.rs` | `load` (datos de ambos lados), `Plan` (issues, proyectos, actividades, filas), duplicados, `execute` |
-| `src/issue_sync.rs` | `diff` campo a campo para igualar issues de destino, `apply` + relectura para detectar campos ignorados |
-| `src/store.rs` | Configuración JSON: instancias, `PairMappings` por pareja dirigida `"src->dst"`, `ledger`, `Settings` |
-| `src/secrets.rs` | `keyring` (Windows Credential Manager / Secret Service) |
+| `core/redmine/` | Cliente REST bloqueante (ureq 3; `http_status_as_error(false)` para leer errores 422) y modelos serde |
+| `core/matching.rs` | `normalize`, `similarity`, familias de sinónimos (`NAME_FAMILIES`), ranking de candidatos, marca `[sync:…]` |
+| `core/sync.rs` | `load` (datos de ambos lados), `Plan` (issues, proyectos, actividades, filas), duplicados, `execute` |
+| `core/issue_sync.rs` | `diff` campo a campo para igualar issues de destino, `apply` + relectura para detectar campos ignorados |
+| `core/store.rs` | Configuración JSON: instancias, `PairMappings` por pareja dirigida `"src->dst"`, `ledger`, `Settings` |
+| `core/secrets.rs` | `keyring` (Windows Credential Manager / Secret Service) |
+| `core/dates.rs`, `core/format.rs` | Fechas (`today`, `week_of`, `iso`, `pretty`…) y `hours` (reexportada en `theme`) |
 | `src/worker.rs` | Hilos de fondo; los resultados vuelven como `app::Msg` y se procesan al inicio de cada frame |
-| `src/app.rs` | `App`, `Session`, `Msg`, barra superior, avisos, utilidades de fechas, piloto automático debug |
+| `src/app.rs` | `App`, `Session`, `Msg`, barra superior, avisos, piloto automático debug |
 | `src/theme.rs` | Paletas claro/oscuro, fuentes, componentes (`card`, `badge`, `pill`, `primary_button`, `stat`…) |
 | `src/ui/*.rs` | Una pantalla por fichero; cada una expone `show(app, ui)` y sus `on_*` para mensajes |
 
@@ -166,11 +173,11 @@ paralelo **como mucho una propuesta por grupo**:
 
 | Grupo | Ficheros principales | Propuestas |
 |---|---|---|
-| Sincronización (UI) | `ui/sync_view.rs`, `sync.rs` | P-05, P-06, P-07, P-09, P-13, P-17, P-22, P-32 |
-| Igualado de issues | `issue_sync.rs` | P-03, P-14, P-15 |
-| Mapeos y datos | `store.rs`, `ui/mappings.rs` | P-04, P-18, P-19, P-20, P-21 |
-| Cliente y red | `redmine/client.rs`, `worker.rs` | P-02, P-27, P-28, P-29, P-30, P-31 |
-| Emparejamiento | `matching.rs` | P-10, P-11, P-12 |
+| Sincronización (UI) | `ui/sync_view.rs`, `core/sync.rs` | P-05, P-06, P-07, P-09, P-13, P-17, P-22, P-32 |
+| Igualado de issues | `core/issue_sync.rs` | P-03, P-14, P-15 |
+| Mapeos y datos | `core/store.rs`, `ui/mappings.rs` | P-04, P-18, P-19, P-20, P-21 |
+| Cliente y red | `core/redmine/client.rs`, `worker.rs` | P-02, P-27, P-28, P-29, P-30, P-31 |
+| Emparejamiento | `core/matching.rs` | P-10, P-11, P-12 |
 | Interfaz general | `app.rs`, `theme.rs`, `ui/settings.rs` | P-23, P-24, P-25, P-26, P-36 |
 | Infraestructura | `.github/`, `docker/`, `scripts/`, `build.rs`, docs | P-33, P-34, P-35, P-37, P-38, P-40, P-42 |
 | Arquitectura | todo el árbol | P-41 (en solitario: reorganiza módulos), P-43, P-44, P-01 |
@@ -178,7 +185,7 @@ paralelo **como mucho una propuesta por grupo**:
 Notas:
 - P-41 mueve casi todos los ficheros: hazla sin ningún otro agente activo, o al principio de una
   versión.
-- P-14 añade datos al historial (`store.rs`), así que coordínala con el grupo «Mapeos y datos».
+- P-14 añade datos al historial (`core/store.rs`), así que coordínala con el grupo «Mapeos y datos».
 - Las propuestas de infraestructura apenas tocan `src/` y son buenas candidatas para ir en paralelo
   con cualquier otra.
 

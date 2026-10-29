@@ -2,8 +2,9 @@
 
 use egui::{RichText, Theme, Ui, vec2};
 
+use rdmnsync_core::store::Store;
+
 use crate::app::{App, weak};
-use crate::store::Store;
 use crate::theme::{self, icon};
 
 pub fn show(app: &mut App, ui: &mut Ui) {

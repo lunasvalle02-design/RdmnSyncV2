@@ -5,11 +5,12 @@ use std::collections::BTreeMap;
 use egui::{Align, Layout, Margin, RichText, TextEdit, Ui, vec2};
 use egui_extras::{Column, TableBuilder};
 
-use crate::app::{App, Msg, ToastKind, dates, weak};
-use crate::matching::normalize;
-use crate::redmine::{Project, Version};
-use crate::matching::same_name;
-use crate::store::{CommentRule, ProjectLink, VersionLink, pair_key};
+use rdmnsync_core::dates;
+use rdmnsync_core::matching::{normalize, same_name};
+use rdmnsync_core::redmine::{Project, Version};
+use rdmnsync_core::store::{CommentRule, ProjectLink, VersionLink, pair_key};
+
+use crate::app::{App, Msg, ToastKind, weak};
 use crate::theme::{self, icon};
 
 #[derive(Default)]
@@ -104,7 +105,7 @@ impl App {
     }
 }
 
-fn combo(ui: &mut Ui, id: &str, value: &mut Option<String>, ids: &[String], store: &crate::store::Store) {
+fn combo(ui: &mut Ui, id: &str, value: &mut Option<String>, ids: &[String], store: &rdmnsync_core::store::Store) {
     egui::ComboBox::from_id_salt(id)
         .selected_text(value.as_ref().map(|v| store.instance_name(v)).unwrap_or_default())
         .width(200.0)
@@ -614,9 +615,9 @@ fn issues(app: &mut App, ui: &mut Ui, src: &str, dst: &str) {
                         });
                         row.col(|ui| {
                             let color = match l.origin {
-                                crate::store::LinkOrigin::Created => p.success,
-                                crate::store::LinkOrigin::Confirmed => p.info,
-                                crate::store::LinkOrigin::Auto => p.warning,
+                                rdmnsync_core::store::LinkOrigin::Created => p.success,
+                                rdmnsync_core::store::LinkOrigin::Confirmed => p.info,
+                                rdmnsync_core::store::LinkOrigin::Auto => p.warning,
                             };
                             theme::badge(ui, l.origin.label(), color);
                         });
@@ -724,7 +725,7 @@ fn history(app: &mut App, ui: &mut Ui, src: &str, dst: &str) {
                 match client.delete_time_entry(id) {
                     Ok(()) => ok.push(id),
                     // Ya no existe: se considera deshecha.
-                    Err(crate::redmine::ApiError::Http { status: 404, .. }) => ok.push(id),
+                    Err(rdmnsync_core::redmine::ApiError::Http { status: 404, .. }) => ok.push(id),
                     Err(e) => errors.push(format!("#{id}: {e}")),
                 }
             }

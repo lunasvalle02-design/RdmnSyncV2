@@ -3,9 +3,11 @@
 use egui::{Align, Layout, Margin, RichText, Sense, TextEdit, Ui, vec2};
 use egui_extras::{Column, TableBuilder};
 
-use crate::app::{App, Loadable, Msg, dates, weak};
-use crate::matching::normalize;
-use crate::redmine::{Issue, IssueQuery, TimeEntry, TimeEntryQuery};
+use rdmnsync_core::dates;
+use rdmnsync_core::matching::normalize;
+use rdmnsync_core::redmine::{Issue, IssueQuery, TimeEntry, TimeEntryQuery};
+
+use crate::app::{App, Loadable, Msg, weak};
 use crate::theme::{self, icon};
 
 pub struct ExplorerState {

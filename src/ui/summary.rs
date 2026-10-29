@@ -5,8 +5,10 @@ use std::collections::BTreeMap;
 use chrono::{Datelike, Duration, NaiveDate};
 use egui::{Align, Layout, RichText, Sense, Ui, vec2};
 
-use crate::app::{App, Msg, Tab, dates, weak};
-use crate::redmine::{TimeEntry, TimeEntryQuery};
+use rdmnsync_core::dates;
+use rdmnsync_core::redmine::{TimeEntry, TimeEntryQuery};
+
+use crate::app::{App, Msg, Tab, weak};
 use crate::theme::{self, icon};
 
 pub struct SummaryState {
