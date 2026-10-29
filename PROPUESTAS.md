@@ -389,7 +389,7 @@ Ejecutar el test de extremo a extremo contra Redmine 4.2, 5.1 y 6.x para dar sop
 esas versiones. Hoy solo se ha probado con la 6.
 
 ### P-41 · Separar la interfaz del motor
-**Valor** ⭐ · **Esfuerzo** M
+**Valor** ⭐ · **Esfuerzo** M · ✅ Implementada (rama `propuesta/P-41-separar-interfaz-motor`)
 
 Mover el cliente de Redmine, el emparejamiento y la sincronización a una biblioteca (`rdmnsync-core`)
 dentro de un *workspace*. Facilita los tests, la línea de comandos (P-43) y futuras interfaces.

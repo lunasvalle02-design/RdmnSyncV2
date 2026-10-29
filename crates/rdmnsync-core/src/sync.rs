@@ -678,7 +678,7 @@ mod tests {
 #[cfg(test)]
 mod live_tests {
     use super::*;
-    use crate::app::dates;
+    use crate::dates;
 
     fn env(k: &str) -> String {
         std::env::var(k).unwrap_or_else(|_| panic!("falta {k}"))

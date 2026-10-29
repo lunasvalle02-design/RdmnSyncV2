@@ -233,18 +233,24 @@ la pantalla de conexiones (si hay dos Redmines conectados) y abre esa pestaña; 
 
 | Ruta | Contenido |
 |---|---|
-| `src/redmine/` | Cliente REST bloqueante (ureq + rustls con verificador de la plataforma) y modelos |
-| `src/matching.rs` | Normalización de textos, similitud, familias de nombres, marca `[sync:…]` |
-| `src/sync.rs` | Carga de datos, construcción del plan, deduplicación y envío de imputaciones |
-| `src/issue_sync.rs` | Diferencias campo a campo y actualización de issues de destino |
-| `src/store.rs` | Configuración, mapeos e historial (JSON) |
-| `src/secrets.rs` | API keys en el almacén de credenciales del sistema |
-| `src/worker.rs` | Tareas de red en hilos de fondo con mensajes a la interfaz |
-| `src/theme.rs` | Paleta, tipografía y componentes visuales |
-| `src/ui/` | Pantallas: conexiones, explorador, sincronizar, mapeos, resumen y ajustes |
+| `crates/rdmnsync-core/` | **Motor** (biblioteca sin dependencias de interfaz): |
+| `  src/redmine/` | Cliente REST bloqueante (ureq + rustls con verificador de la plataforma) y modelos |
+| `  src/matching.rs` | Normalización de textos, similitud, familias de nombres, marca `[sync:…]` |
+| `  src/sync.rs` | Carga de datos, construcción del plan, deduplicación y envío de imputaciones |
+| `  src/issue_sync.rs` | Diferencias campo a campo y actualización de issues de destino |
+| `  src/store.rs` | Configuración, mapeos e historial (JSON) |
+| `  src/secrets.rs` | API keys en el almacén de credenciales del sistema |
+| `  src/dates.rs`, `src/format.rs` | Utilidades de fechas y formato de horas |
+| `src/` | **Aplicación de escritorio** (egui), que usa el motor: |
+| `  src/worker.rs` | Tareas de red en hilos de fondo con mensajes a la interfaz |
+| `  src/theme.rs` | Paleta, tipografía y componentes visuales |
+| `  src/ui/` | Pantallas: conexiones, explorador, sincronizar, mapeos, resumen y ajustes |
 | `docker/` | Imagen de compilación y Redmines de prueba |
 | `scripts/` | Compilación y wrapper de cargo en Docker |
 | `docs/img/` | Capturas usadas en la documentación |
+
+El repositorio es un *workspace* de Cargo: `cargo test` prueba la aplicación y el motor a la vez, y
+`cargo test -p rdmnsync-core` solo el motor (no necesita compilar egui).
 
 Pila: Rust 2024, [egui/eframe](https://github.com/emilk/egui) 0.37, ureq 3, serde, keyring, strsim.
 

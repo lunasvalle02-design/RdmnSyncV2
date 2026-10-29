@@ -6,16 +6,18 @@ use chrono::{Duration, Local};
 use egui::{Align, Layout, Margin, RichText, TextEdit, Ui, vec2};
 use egui_extras::{Column, TableBuilder};
 
-use crate::app::{App, Loadable, Msg, ToastKind, dates, weak};
-use crate::issue_sync::{self, DiffCtx, Field, IssueDiff, Pending};
-use crate::matching::{self, Confidence};
-use crate::redmine::{
+use rdmnsync_core::dates;
+use rdmnsync_core::issue_sync::{self, DiffCtx, Field, IssueDiff, Pending};
+use rdmnsync_core::matching::{self, Confidence};
+use rdmnsync_core::redmine::{
     CustomFieldInput, CustomFieldValue, Issue, NewIssue, Priority, TimeEntry, Tracker,
 };
-use crate::store::{IssueLink, LedgerEntry, LinkOrigin, ProjectLink, VersionLink, pair_key};
-use crate::sync::{
+use rdmnsync_core::store::{IssueLink, LedgerEntry, LinkOrigin, ProjectLink, VersionLink, pair_key};
+use rdmnsync_core::sync::{
     self, ExecItem, IssueState, Plan, PlanInput, ProjectSuggestion, Readiness, RowSync, SyncData,
 };
+
+use crate::app::{App, Loadable, Msg, ToastKind, weak};
 use crate::theme::{self, icon};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -423,7 +425,7 @@ fn issue_diffs(app: &mut App) -> Vec<IssueDiff> {
     let diffs = {
         let (Some(plan), Some(session)) = (&app.sync.plan, app.sessions.get(&dst)) else { return vec![] };
         let pair = app.store.pair(&src, &dst);
-        let dst_versions: HashMap<u32, Vec<crate::redmine::Version>> = app
+        let dst_versions: HashMap<u32, Vec<rdmnsync_core::redmine::Version>> = app
             .versions
             .iter()
             .filter(|((inst, _), _)| *inst == dst)
@@ -592,7 +594,7 @@ fn issue_updates(app: &mut App, ui: &mut Ui, diffs: &[IssueDiff]) {
             _ => {}
         }
     }
-    let version_options: HashMap<u32, Vec<crate::redmine::Version>> =
+    let version_options: HashMap<u32, Vec<rdmnsync_core::redmine::Version>> =
         versions.iter().map(|v| (v.2, app.versions_of(&dst, v.2).to_vec())).collect();
     let changed: Vec<&IssueDiff> = diffs.iter().filter(|d| !d.changes.is_empty()).collect();
     let up_to_date = diffs.len() - changed.len();
@@ -899,7 +901,7 @@ fn config_card(app: &mut App, ui: &mut Ui, connected: &[String]) {
     }
 }
 
-fn instance_combo(ui: &mut Ui, id: &str, value: &mut Option<String>, options: &[String], store: &crate::store::Store) {
+fn instance_combo(ui: &mut Ui, id: &str, value: &mut Option<String>, options: &[String], store: &rdmnsync_core::store::Store) {
     let text = value.as_ref().map(|v| store.instance_name(v)).unwrap_or_default();
     egui::ComboBox::from_id_salt(id).selected_text(text).width(200.0).show_ui(ui, |ui| {
         for o in options {
@@ -1564,7 +1566,7 @@ fn create_dialog(app: &mut App, ui: &mut Ui) {
             app.worker.spawn(move || Msg::CreateMeta {
                 project,
                 result: (|| Ok((c.project_trackers(project)?, c.priorities()?)))()
-                    .map_err(|e: crate::redmine::ApiError| e.to_string()),
+                    .map_err(|e: rdmnsync_core::redmine::ApiError| e.to_string()),
             });
         }
         if let (Some(tracker), Loadable::Idle) = (dlg.tracker, &dlg.fields) {

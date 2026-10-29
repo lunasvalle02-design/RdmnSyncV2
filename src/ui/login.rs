@@ -4,10 +4,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use egui::{RichText, TextEdit, Ui, vec2};
 
+use rdmnsync_core::redmine::{Client, normalize_url};
+use rdmnsync_core::secrets;
+use rdmnsync_core::store::{Instance, Store};
+
 use crate::app::{App, Msg, Session, ToastKind, weak};
-use crate::redmine::{Client, normalize_url};
-use crate::secrets;
-use crate::store::{Instance, Store};
 use crate::theme::{self, icon};
 
 pub enum ConnStatus {

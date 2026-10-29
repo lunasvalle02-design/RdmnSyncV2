@@ -1,0 +1,22 @@
+[package]
+name = "rdmnsync-core"
+description = "Motor de RdmnSync: cliente de Redmine, emparejamiento y sincronización de imputaciones"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+ureq = { version = "3", features = ["json", "platform-verifier"] }
+strsim = "0.11"
+deunicode = "1"
+directories = "6"
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3.6", features = ["windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3.6", features = ["sync-secret-service", "crypto-rust", "vendored"] }

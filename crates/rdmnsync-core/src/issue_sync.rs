@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde_json::{Map, Value, json};
 
-use crate::app::dates;
+use crate::dates;
 use crate::matching::same_name;
 use crate::redmine::{Client, Issue, IssueStatus, Priority, Version};
 use crate::store::{IssueFields, PairMappings};
@@ -121,7 +121,7 @@ impl Field {
             Field::DoneRatio => format!("{:.0} %", i.done_ratio.unwrap_or(0.0)),
             Field::StartDate => i.start_date.as_deref().map_or_else(none, dates::pretty),
             Field::DueDate => i.due_date.as_deref().map_or_else(none, dates::pretty),
-            Field::Estimated => i.estimated_hours.map_or_else(none, crate::theme::hours),
+            Field::Estimated => i.estimated_hours.map_or_else(none, crate::format::hours),
             Field::Subject => i.subject.clone(),
             Field::Description => short(i.description_text()),
         }

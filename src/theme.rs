@@ -6,6 +6,7 @@ use egui::{
 };
 
 pub use egui_phosphor::regular as icon;
+pub use rdmnsync_core::format::hours;
 
 #[derive(Clone, Copy)]
 pub struct Palette {
@@ -395,10 +396,4 @@ pub fn logo(ui: &mut Ui, size: f32) {
 pub fn status_dot(ui: &mut Ui, color: Color32) {
     let (rect, _) = ui.allocate_exact_size(vec2(10.0, 10.0), egui::Sense::hover());
     ui.painter().circle_filled(rect.center(), 4.0, color);
-}
-
-pub fn hours(h: f64) -> String {
-    let s = format!("{h:.2}");
-    let s = s.trim_end_matches('0').trim_end_matches('.');
-    format!("{s} h")
 }

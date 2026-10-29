@@ -1,5 +1,5 @@
 //! Cliente HTTP bloqueante para la API REST de Redmine.
-//! Se usa siempre desde hilos de fondo (ver `worker`), nunca desde el hilo de la interfaz.
+//! La interfaz lo usa siempre desde hilos de fondo, nunca desde su hilo principal.
 
 use std::time::Duration;
 

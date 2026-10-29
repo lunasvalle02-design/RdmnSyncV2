@@ -2917,12 +2917,21 @@ name = "rdmnsync"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "deunicode",
- "directories",
  "eframe",
  "egui 0.37.0",
  "egui-phosphor",
  "egui_extras",
+ "rdmnsync-core",
+ "serde_json",
+]
+
+[[package]]
+name = "rdmnsync-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "deunicode",
+ "directories",
  "keyring",
  "serde",
  "serde_json",
