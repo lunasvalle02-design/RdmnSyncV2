@@ -90,7 +90,7 @@ de la interfaz: lo que necesiten ambos (fechas, formato de horas) va en el motor
 | `core/dates.rs`, `core/format.rs` | Fechas (`today`, `week_of`, `iso`, `pretty`…) y `hours` (reexportada en `theme`) |
 | `src/worker.rs` | Hilos de fondo; los resultados vuelven como `app::Msg` y se procesan al inicio de cada frame |
 | `src/app.rs` | `App`, `Session`, `Msg`, barra superior, avisos, piloto automático debug |
-| `src/theme.rs` | Paletas claro/oscuro, fuentes, componentes (`card`, `badge`, `pill`, `primary_button`, `stat`…) |
+| `src/theme.rs` | Paletas claro/oscuro, fuentes, componentes y animaciones (`card`, `badge`, `segmented`, `primary_button`, `stat`…) |
 | `src/ui/*.rs` | Una pantalla por fichero; cada una expone `show(app, ui)` y sus `on_*` para mensajes |
 
 Flujo de una operación de red: la UI llama a `app.worker.spawn(move || Msg::X { … })` con un `Client`
@@ -105,6 +105,11 @@ respuestas obsoletas. Nunca bloquees el hilo de la interfaz.
   obvios). Sin warnings: `cargo check` debe salir limpio.
 - **UI**: usa los componentes de `theme.rs` y la paleta (`theme::palette(ui)`); iconos de
   `egui_phosphor::regular` vía `theme::icon`. Textos con plural correcto (`plural()` en `sync_view.rs`).
+- **Animaciones**: los componentes de `theme.rs` animan hover, pulsación y selección. Usa
+  `theme::checkbox`, `switch`, `toggle_chip` y `segmented` en lugar de `ui.checkbox`/`toggle_value`/
+  pestañas sueltas; `icon_button_danger` para acciones destructivas; `loading`/`skeleton` mientras
+  llegan datos. Para animar algo propio: `hover_t` (hover), `ease_to`/`ease_to_from` (valores que
+  cambian) y `appear` (entrada al mostrarse). Mantén las transiciones cortas (≤ 0,3 s).
 - **Borrow checker en egui**: dentro de closures de `theme::card`/`Grid`, no llames a métodos `&self`
   de `App` mientras tengas prestado un campo. Precalcula los datos fuera o recoge acciones en vectores
   y aplícalas después del closure (patrón usado en todas las pantallas).

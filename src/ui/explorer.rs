@@ -19,6 +19,8 @@ pub struct ExplorerState {
     include_closed: bool,
     issues: Loadable<Vec<Issue>>,
     selected: Option<u32>,
+    /// Issue del panel de detalle; se conserva mientras el panel se cierra con su animación.
+    shown: Option<u32>,
     entries: Loadable<Vec<TimeEntry>>,
     only_my_entries: bool,
     seq: u64,
@@ -35,6 +37,7 @@ impl Default for ExplorerState {
             include_closed: false,
             issues: Loadable::Idle,
             selected: None,
+            shown: None,
             entries: Loadable::Idle,
             only_my_entries: false,
             seq: 0,
@@ -111,17 +114,22 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         .frame(egui::Frame::new().fill(p.surface).inner_margin(Margin::same(14)))
         .show(ui, |ui| projects_panel(app, ui, &connected));
 
-    if app.explorer.selected.is_some() {
-        egui::Panel::right("explorer_detail")
-            .resizable(true)
-            .default_size(460.0)
-            .size_range(340.0..=760.0)
-            .frame(egui::Frame::new().fill(p.surface).inner_margin(Margin::same(16)))
-            .show(ui, |ui| detail_panel(app, ui));
+    let mut open = app.explorer.selected.is_some();
+    if let Some(id) = app.explorer.selected {
+        app.explorer.shown = Some(id);
+    }
+    egui::Panel::right("explorer_detail")
+        .resizable(true)
+        .default_size(460.0)
+        .size_range(340.0..=760.0)
+        .frame(egui::Frame::new().fill(p.surface).inner_margin(Margin::same(18)))
+        .show_collapsible(ui, &mut open, |ui| detail_panel(app, ui));
+    if !open {
+        app.explorer.selected = None;
     }
 
     egui::CentralPanel::default()
-        .frame(egui::Frame::new().inner_margin(Margin::symmetric(20, 16)))
+        .frame(egui::Frame::new().inner_margin(Margin::symmetric(24, 18)))
         .show(ui, |ui| issues_panel(app, ui));
 }
 
@@ -129,11 +137,12 @@ fn projects_panel(app: &mut App, ui: &mut Ui, connected: &[String]) {
     ui.label(weak(ui, "REDMINE").size(11.0));
     let mut changed_inst = None;
     ui.horizontal_wrapped(|ui| {
-        for id in connected {
-            let sel = app.explorer.inst.as_deref() == Some(id.as_str());
-            if theme::pill(ui, sel, app.store.instance_name(id)).clicked() && !sel {
-                changed_inst = Some(id.clone());
-            }
+        let names: Vec<String> = connected.iter().map(|id| app.store.instance_name(id)).collect();
+        let current = connected.iter().position(|id| app.explorer.inst.as_deref() == Some(id.as_str()));
+        if let Some(i) = theme::segmented(ui, "explorer_inst", current, &names)
+            && Some(i) != current
+        {
+            changed_inst = Some(connected[i].clone());
         }
     });
     if let Some(id) = changed_inst {
@@ -142,19 +151,20 @@ fn projects_panel(app: &mut App, ui: &mut Ui, connected: &[String]) {
         app.explorer.selected = None;
         app.explorer.issues = Loadable::Idle;
     }
-    ui.add_space(6.0);
+    ui.add_space(8.0);
     ui.add(
         TextEdit::singleline(&mut app.explorer.project_filter)
             .hint_text(format!("{}  Buscar proyecto", icon::MAGNIFYING_GLASS))
             .desired_width(f32::INFINITY),
     );
-    ui.add_space(4.0);
+    ui.add_space(10.0);
     let Some(session) = app.explorer.inst.as_ref().and_then(|i| app.sessions.get(i)) else { return };
     let filter = normalize(&app.explorer.project_filter);
     let ids: std::collections::HashSet<u32> = session.projects.iter().map(|p| p.id).collect();
     let mut clicked = None;
     ui.label(weak(ui, format!("PROYECTOS ({})", session.projects.len())).size(11.0));
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
         for project in &session.projects {
             if !filter.is_empty() && !normalize(&project.name).contains(&filter) {
                 continue;
@@ -192,8 +202,8 @@ fn issues_panel(app: &mut App, ui: &mut Ui) {
     theme::page_header(ui, &project_name, &format!("{} · {}", app.store.instance_name(app.explorer.inst.as_deref().unwrap_or_default()), base));
     let mut reload = false;
     ui.horizontal(|ui| {
-        reload |= ui.toggle_value(&mut app.explorer.only_mine, format!("{}  Asignados a mí", icon::USER)).changed();
-        reload |= ui.toggle_value(&mut app.explorer.include_closed, format!("{}  Incluir cerrados", icon::ARCHIVE)).changed();
+        reload |= theme::toggle_chip(ui, &mut app.explorer.only_mine, format!("{}  Asignados a mí", icon::USER)).changed();
+        reload |= theme::toggle_chip(ui, &mut app.explorer.include_closed, format!("{}  Incluir cerrados", icon::ARCHIVE)).changed();
         ui.add(
             TextEdit::singleline(&mut app.explorer.issue_filter)
                 .hint_text(format!("{}  Filtrar por asunto o número", icon::FUNNEL))
@@ -209,14 +219,11 @@ fn issues_panel(app: &mut App, ui: &mut Ui) {
         load_issues(app);
         return;
     }
-    ui.add_space(8.0);
+    ui.add_space(10.0);
 
     let issues = match &app.explorer.issues {
         Loadable::Idle | Loadable::Loading => {
-            ui.vertical_centered(|ui| {
-                ui.add_space(40.0);
-                ui.spinner();
-            });
+            theme::card_frame(ui).show(ui, |ui| theme::skeleton(ui, 8));
             return;
         }
         Loadable::Failed(e) => {
@@ -295,7 +302,7 @@ fn detail_panel(app: &mut App, ui: &mut Ui) {
     let p = theme::palette(ui);
     let Some(session) = app.explorer.inst.as_ref().and_then(|i| app.sessions.get(i)) else { return };
     let Loadable::Ready(issues) = &app.explorer.issues else { return };
-    let Some(issue) = app.explorer.selected.and_then(|id| issues.iter().find(|i| i.id == id)).cloned() else {
+    let Some(issue) = app.explorer.shown.and_then(|id| issues.iter().find(|i| i.id == id)).cloned() else {
         return;
     };
     let url = session.client.issue_url(issue.id);
@@ -346,23 +353,23 @@ fn detail_panel(app: &mut App, ui: &mut Ui) {
         });
 
         if !issue.description_text().trim().is_empty() {
-            ui.add_space(10.0);
+            ui.add_space(14.0);
             theme::section_title(ui, icon::TEXT_ALIGN_LEFT, "Descripción");
             theme::card(ui, |ui| {
                 ui.add(egui::Label::new(issue.description_text()).wrap());
             });
         }
 
-        ui.add_space(10.0);
+        ui.add_space(14.0);
         ui.horizontal(|ui| {
             theme::section_title(ui, icon::CLOCK, "Imputaciones");
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                reload |= ui.toggle_value(&mut app.explorer.only_my_entries, "Solo las mías").changed();
+                reload |= theme::toggle_chip(ui, &mut app.explorer.only_my_entries, "Solo las mías").changed();
             });
         });
         match &app.explorer.entries {
             Loadable::Idle | Loadable::Loading => {
-                ui.spinner();
+                theme::card(ui, |ui| theme::skeleton(ui, 3));
             }
             Loadable::Failed(e) => theme::callout(ui, icon::WARNING, p.danger, e.clone()),
             Loadable::Ready(entries) if entries.is_empty() => {
@@ -374,6 +381,7 @@ fn detail_panel(app: &mut App, ui: &mut Ui) {
                     TableBuilder::new(ui)
                         .id_salt("issue_entries")
                         .striped(true)
+                        .sense(Sense::click())
                         .cell_layout(Layout::left_to_right(Align::Center))
                         .column(Column::exact(84.0))
                         .column(Column::auto().at_least(90.0))

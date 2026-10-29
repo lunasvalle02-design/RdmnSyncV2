@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use chrono::{Datelike, Duration, NaiveDate};
-use egui::{Align, Layout, RichText, Sense, Ui, vec2};
+use egui::{Align, Id, Layout, RichText, Sense, Ui, vec2};
 
 use rdmnsync_core::dates;
 use rdmnsync_core::redmine::{TimeEntry, TimeEntryQuery};
@@ -110,7 +110,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         if let Some(w) = nav {
             app.summary.week = w;
         }
-        ui.add_space(12.0);
+        ui.add_space(16.0);
 
         let mut per_day: BTreeMap<(String, String), f64> = BTreeMap::new();
         for (inst, res) in &app.summary.data {
@@ -139,7 +139,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     ui.label(weak(ui, "Diferencia"));
                     ui.end_row();
                     let mut totals = vec![0.0; connected.len()];
-                    for day in &days {
+                    for (d, day) in days.iter().enumerate() {
                         let iso = dates::iso(*day);
                         let weekend = day.weekday().num_days_from_monday() >= 5;
                         let label = format!("{} {}", dates::weekday_es(*day), day.format("%d/%m"));
@@ -151,11 +151,14 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         for (i, h) in hours.iter().enumerate() {
                             totals[i] += h;
                             ui.horizontal(|ui| {
-                                let (rect, _) = ui.allocate_exact_size(vec2(90.0, 8.0), Sense::hover());
+                                let (rect, resp) = ui.allocate_exact_size(vec2(90.0, 8.0), Sense::hover());
+                                let target = (*h / max).min(1.0) as f32;
+                                let ratio = theme::ease_to_from(ui, Id::unique(("weekly_bar", i, d)), target, 0.5, 0.0);
+                                let hover = theme::hover_t(ui, &resp);
                                 ui.painter().rect_filled(rect, 4, p.control);
                                 let mut fill = rect;
-                                fill.set_width(rect.width() * (*h / max).min(1.0) as f32);
-                                ui.painter().rect_filled(fill, 4, p.accent);
+                                fill.set_width(rect.width() * ratio);
+                                ui.painter().rect_filled(fill, 4, p.accent.lerp_to_gamma(p.text, 0.2 * hover));
                                 ui.label(if *h > 0.0 { RichText::new(theme::hours(*h)) } else { weak(ui, "—") });
                             });
                         }
@@ -171,7 +174,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 });
         });
         if connected.len() >= 2 {
-            ui.add_space(10.0);
+            ui.add_space(14.0);
             if ui.button(format!("{}  Sincronizar esta semana", icon::ARROWS_CLOCKWISE)).clicked() {
                 app.sync.set_range(week, week + Duration::days(6));
                 app.tab = Tab::Sync;

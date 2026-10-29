@@ -3,7 +3,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 
-use egui::{Align, Layout, Margin, RichText, Stroke, Theme, Ui};
+use egui::emath::easing;
+use egui::{Align, Layout, Margin, Rect, RichText, Stroke, Theme, Ui, pos2, vec2};
 
 use rdmnsync_core::redmine::{
     Activity, Client, CustomFieldValue, Issue, IssueStatus, Priority, Project, TimeEntry, Tracker, User, Version,
@@ -77,10 +78,16 @@ pub enum ToastKind {
 }
 
 struct Toast {
+    id: u64,
     kind: ToastKind,
     text: String,
+    born: Instant,
     until: Instant,
+    secs: f32,
 }
+
+/// Duración de la entrada y la salida de un aviso.
+const TOAST_FADE: f32 = 0.25;
 
 pub struct App {
     pub store: Store,
@@ -96,6 +103,7 @@ pub struct App {
     /// Versiones por (instancia, proyecto), cargadas bajo demanda.
     pub versions: HashMap<(String, u32), Loadable<Vec<Version>>>,
     toasts: Vec<Toast>,
+    toast_seq: u64,
 }
 
 impl App {
@@ -116,6 +124,7 @@ impl App {
             summary: Default::default(),
             versions: HashMap::new(),
             toasts: Vec::new(),
+            toast_seq: 0,
         };
         if let Some(e) = app.store.last_error.take() {
             app.toast(ToastKind::Error, e);
@@ -130,7 +139,16 @@ impl App {
             ToastKind::Warning => 6,
             _ => 4,
         };
-        self.toasts.push(Toast { kind, text: text.into(), until: Instant::now() + Duration::from_secs(secs) });
+        let now = Instant::now();
+        self.toast_seq += 1;
+        self.toasts.push(Toast {
+            id: self.toast_seq,
+            kind,
+            text: text.into(),
+            born: now,
+            until: now + Duration::from_secs(secs),
+            secs: secs as f32,
+        });
     }
 
     pub fn save(&mut self) {
@@ -212,10 +230,10 @@ impl App {
                 (Tab::Summary, icon::CALENDAR_DOTS, "Resumen semanal"),
                 (Tab::Settings, icon::GEAR_SIX, "Ajustes"),
             ];
-            for (tab, ic, label) in tabs {
-                if theme::pill(ui, self.tab == tab, format!("{ic}  {label}")).clicked() {
-                    self.tab = tab;
-                }
+            let labels: Vec<String> = tabs.iter().map(|(_, ic, label)| format!("{ic}  {label}")).collect();
+            let current = tabs.iter().position(|(t, ..)| *t == self.tab);
+            if let Some(i) = theme::segmented(ui, "top_tabs", current, &labels) {
+                self.tab = tabs[i].0;
             }
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -237,7 +255,7 @@ impl App {
                         .inner_margin(Margin::symmetric(10, 3))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                theme::status_dot(ui, p.success);
+                                theme::status_dot(ui, p.success, false);
                                 ui.label(RichText::new(self.store.instance_name(id)).size(12.5));
                             });
                         })
@@ -245,12 +263,14 @@ impl App {
                         .on_hover_text(format!("Conectado como {user}"));
                 }
                 if self.worker.busy() {
-                    ui.spinner();
+                    ui.add(egui::Spinner::new().size(16.0).color(p.accent));
                 }
             });
         });
     }
 
+    /// Avisos apilados en la esquina: entran deslizándose, muestran el tiempo que les queda y se
+    /// desvanecen al caducar. Pasar el ratón por encima los detiene.
     fn show_toasts(&mut self, ui: &mut Ui) {
         let now = Instant::now();
         self.toasts.retain(|t| t.until > now);
@@ -259,40 +279,56 @@ impl App {
         }
         let p = theme::palette(ui);
         let ctx = ui.ctx().clone();
-        egui::Area::new(egui::Id::unique("toasts"))
-            .anchor(egui::Align2::RIGHT_BOTTOM, [-18.0, -18.0])
-            .order(egui::Order::Foreground)
-            .show(&ctx, |ui| {
-                ui.set_max_width(420.0);
-                let mut close = None;
-                for (i, t) in self.toasts.iter().enumerate() {
-                    let (ic, color) = match t.kind {
-                        ToastKind::Success => (icon::CHECK_CIRCLE, p.success),
-                        ToastKind::Warning => (icon::WARNING, p.warning),
-                        ToastKind::Error => (icon::WARNING_OCTAGON, p.danger),
-                    };
-                    egui::Frame::new()
+        let dt = Duration::from_secs_f32(ui.input(|i| i.stable_dt).min(0.1));
+        let mut close = None;
+        let mut y = 0.0;
+        for (i, t) in self.toasts.iter_mut().enumerate().rev() {
+            let age = now.duration_since(t.born).as_secs_f32();
+            let left = t.until.saturating_duration_since(now).as_secs_f32();
+            let enter = easing::cubic_out((age / TOAST_FADE).min(1.0));
+            let exit = (left / TOAST_FADE).min(1.0);
+            let id = egui::Id::unique(("toast", t.id));
+            let y_off = theme::ease_to(ui, id.with("y"), y, 0.2);
+            let (ic, color) = match t.kind {
+                ToastKind::Success => (icon::CHECK_CIRCLE, p.success),
+                ToastKind::Warning => (icon::WARNING, p.warning),
+                ToastKind::Error => (icon::WARNING_OCTAGON, p.danger),
+            };
+            let area = egui::Area::new(id)
+                .anchor(egui::Align2::RIGHT_BOTTOM, [-18.0 + 48.0 * (1.0 - enter), -18.0 - y_off])
+                .order(egui::Order::Foreground)
+                .show(&ctx, |ui| {
+                    ui.set_max_width(420.0);
+                    ui.multiply_opacity(enter.min(exit));
+                    let frame = egui::Frame::new()
                         .fill(p.card)
                         .stroke(Stroke::new(1.0, color.gamma_multiply(0.5)))
                         .corner_radius(10)
-                        .inner_margin(Margin::symmetric(14, 10))
+                        .inner_margin(Margin { left: 14, right: 8, top: 10, bottom: 12 })
                         .shadow(ui.visuals().popup_shadow)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(ic).size(18.0).color(color));
                                 ui.add(egui::Label::new(&t.text).wrap());
-                                if ui.small_button(icon::X).clicked() {
+                                if theme::icon_button(ui, icon::X, "Cerrar").clicked() {
                                     close = Some(i);
                                 }
                             });
                         });
-                    ui.add_space(4.0);
-                }
-                if let Some(i) = close {
-                    self.toasts.remove(i);
-                }
-            });
-        ctx.request_repaint_after(Duration::from_millis(500));
+                    let r = frame.response.rect;
+                    let frac = (left / t.secs).clamp(0.0, 1.0);
+                    let bar = Rect::from_min_size(pos2(r.left() + 12.0, r.bottom() - 5.0), vec2((r.width() - 24.0) * frac, 2.0));
+                    ui.painter().rect_filled(bar, 1, color.gamma_multiply(0.55));
+                });
+            if area.response.contains_pointer() {
+                t.until += dt;
+            }
+            y += area.response.rect.height() + 8.0;
+        }
+        if let Some(i) = close {
+            self.toasts.remove(i);
+        }
+        ctx.request_repaint_after(Duration::from_millis(33));
     }
 }
 
@@ -308,7 +344,10 @@ impl eframe::App for App {
         if self.show_login || self.sessions.is_empty() {
             egui::CentralPanel::default()
                 .frame(egui::Frame::new().fill(p.bg).inner_margin(Margin::same(24)))
-                .show(ui, |ui| login::show(self, ui));
+                .show(ui, |ui| {
+                    ui.multiply_opacity(theme::appear(ui, egui::Id::unique("screen_login"), 0.3));
+                    login::show(self, ui)
+                });
         } else {
             egui::Panel::top("top_bar")
                 .frame(
@@ -320,12 +359,15 @@ impl eframe::App for App {
                 .show(ui, |ui| self.top_bar(ui));
             egui::CentralPanel::default()
                 .frame(egui::Frame::new().fill(p.bg).inner_margin(Margin::same(0)))
-                .show(ui, |ui| match self.tab {
-                    Tab::Explorer => explorer::show(self, ui),
-                    Tab::Sync => sync_view::show(self, ui),
-                    Tab::Mappings => mappings::show(self, ui),
-                    Tab::Summary => summary::show(self, ui),
-                    Tab::Settings => settings::show(self, ui),
+                .show(ui, |ui| {
+                    ui.multiply_opacity(theme::appear(ui, egui::Id::unique(("screen", self.tab as u8)), 0.25));
+                    match self.tab {
+                        Tab::Explorer => explorer::show(self, ui),
+                        Tab::Sync => sync_view::show(self, ui),
+                        Tab::Mappings => mappings::show(self, ui),
+                        Tab::Summary => summary::show(self, ui),
+                        Tab::Settings => settings::show(self, ui),
+                    }
                 });
         }
         self.show_toasts(ui);
@@ -357,14 +399,17 @@ impl App {
     }
 }
 
-/// Contenedor con margen y scroll para las páginas de contenido.
+/// Contenedor con margen y scroll para las páginas de contenido. Al abrirse, el contenido sube
+/// unos píxeles mientras aparece.
 pub fn page(ui: &mut Ui, id: &str, add: impl FnOnce(&mut Ui)) {
+    let t = theme::appear(ui, egui::Id::unique(("page", id)), 0.3);
     egui::ScrollArea::vertical()
         .id_salt(id)
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            egui::Frame::new().inner_margin(Margin::symmetric(24, 18)).show(ui, |ui| {
+            egui::Frame::new().inner_margin(Margin::symmetric(28, 22)).show(ui, |ui| {
                 ui.set_width(ui.available_width());
+                ui.add_space(12.0 * (1.0 - t));
                 add(ui)
             });
         });

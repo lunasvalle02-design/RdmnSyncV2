@@ -138,7 +138,7 @@ fn instances_card(app: &mut App, ui: &mut Ui) {
             return;
         }
         for inst in app.store.instances.iter_mut() {
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             let status = app.login.status.get(&inst.id);
             let color = match status {
                 Some(ConnStatus::Connected(_)) => p.success,
@@ -154,11 +154,11 @@ fn instances_card(app: &mut App, ui: &mut Ui) {
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
-                        theme::status_dot(ui, color);
+                        theme::status_dot(ui, color, matches!(status, Some(ConnStatus::Connecting)));
                         ui.label(RichText::new(&inst.name).family(theme::semibold()));
                         ui.label(weak(ui, &inst.url));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if theme::icon_button(ui, icon::TRASH, "Eliminar este Redmine").clicked() {
+                            if theme::icon_button_danger(ui, icon::TRASH, "Eliminar este Redmine").clicked() {
                                 to_remove = Some(inst.id.clone());
                             }
                         });
@@ -183,7 +183,7 @@ fn instances_card(app: &mut App, ui: &mut Ui) {
                                 app.login.visible.insert(inst.id.clone());
                             }
                         }
-                        if ui.checkbox(&mut inst.remember_key, "Recordar").changed() {
+                        if theme::checkbox(ui, &mut inst.remember_key, "Recordar").changed() {
                             changed = true;
                             if !inst.remember_key {
                                 secrets::delete(&inst.id);
@@ -201,7 +201,7 @@ fn instances_card(app: &mut App, ui: &mut Ui) {
                             }
                         });
                         if connecting {
-                            ui.spinner();
+                            ui.add(egui::Spinner::new().color(p.accent));
                         }
                     });
                     match status {
@@ -245,26 +245,30 @@ fn add_card(app: &mut App, ui: &mut Ui) {
                 }
             });
         });
-        if !st.show_add {
-            return;
-        }
-        ui.add_space(6.0);
-        egui::Grid::new("add_instance").num_columns(2).spacing(vec2(12.0, 10.0)).show(ui, |ui| {
-            ui.label("Nombre");
-            ui.add(TextEdit::singleline(&mut st.new_name).hint_text("p. ej. Redmine Cliente").desired_width(380.0));
-            ui.end_row();
-            ui.label("URL");
-            ui.add(TextEdit::singleline(&mut st.new_url).hint_text("https://redmine.ejemplo.com").desired_width(380.0));
-            ui.end_row();
-            ui.label("API key");
-            ui.add(TextEdit::singleline(&mut st.new_key).password(true).desired_width(380.0));
-            ui.end_row();
-            ui.label("");
-            ui.vertical(|ui| {
-                ui.checkbox(&mut st.new_remember, "Recordar la API key en este equipo");
-                ui.checkbox(&mut st.new_insecure, "Aceptar certificados no válidos (solo redes internas)");
-            });
-            ui.end_row();
+        let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
+            ui.ctx(),
+            ui.scope_id().with("add_form"),
+            st.show_add,
+        );
+        state.set_open(st.show_add);
+        state.show_body_unindented(ui, |ui| {
+            ui.add_space(6.0);
+            egui::Grid::new("add_instance").num_columns(2).spacing(vec2(12.0, 10.0)).show(ui, |ui| {
+                ui.label("Nombre");
+                ui.add(TextEdit::singleline(&mut st.new_name).hint_text("p. ej. Redmine Cliente").desired_width(380.0));
+                ui.end_row();
+                ui.label("URL");
+                ui.add(TextEdit::singleline(&mut st.new_url).hint_text("https://redmine.ejemplo.com").desired_width(380.0));
+                ui.end_row();
+                ui.label("API key");
+                ui.add(TextEdit::singleline(&mut st.new_key).password(true).desired_width(380.0));
+                ui.end_row();
+                ui.label("");
+                ui.vertical(|ui| {
+                    theme::checkbox(ui, &mut st.new_remember, "Recordar la API key en este equipo");
+                    theme::checkbox(ui, &mut st.new_insecure, "Aceptar certificados no válidos (solo redes internas)");
+                });
+                ui.end_row();
         });
         ui.add_space(4.0);
         let valid = !st.new_name.trim().is_empty() && !st.new_url.trim().is_empty() && !st.new_key.trim().is_empty();
@@ -272,6 +276,7 @@ fn add_card(app: &mut App, ui: &mut Ui) {
             if theme::primary_button(ui, format!("{}  Añadir y conectar", icon::PLUS)).clicked() {
                 add = true;
             }
+        });
         });
     });
     if add {
